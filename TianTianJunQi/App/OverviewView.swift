@@ -9,7 +9,10 @@ struct OverviewView: View {
     let windows: WindowMonitor
     let capture: CaptureService
     let screenState: ScreenStateService
+    let modeEntry: ModeEntry
     let onEnterMode: () -> Void
+    let onPause: () -> Void
+    let onEmergencyStop: () -> Void
 
     @State private var ciContext = CIContext()
     /// M0-11：竖屏旋转开关（显示层变换，不影响感知/注入坐标链）。
@@ -44,13 +47,17 @@ struct OverviewView: View {
                 Text("主界面").foregroundStyle(.secondary)
                 switch screenState.state {
                 case .main: Text("主菜单 · 入口已定位").foregroundStyle(.green)
+                case .venue: Text("场次选择页").foregroundStyle(.green)
+                case .matching: Text("匹配中…").foregroundStyle(.orange)
                 case .board: Text("牌局")
+                case .result: Text("结算页").foregroundStyle(.orange)
+                case .popup: Text("检测到弹窗").foregroundStyle(.orange)
                 case .unknown: Text("未识别（OCR 运行中）").foregroundStyle(.secondary)
                 }
             }
             GridRow {
                 Text("模式 / 对手").foregroundStyle(.secondary)
-                Text("翻翻棋 · 人机练习（占位）")
+                Text("翻翻棋 · 新手场（真人匹配）")
             }
             GridRow {
                 Text("模型").foregroundStyle(.secondary)
@@ -125,15 +132,30 @@ struct OverviewView: View {
     private var actionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                Button("进入翻翻棋") { onEnterMode() }
-                    .disabled(!permissions.allGranted || windows.effectiveWindowID == nil)
+                Button(modeEntry.isRunning ? "进入中…" : "进入翻翻棋") { onEnterMode() }
+                    .disabled(
+                        modeEntry.isRunning || !permissions.allGranted || windows.effectiveWindowID == nil
+                    )
                 Button("自动对局") {}
-                Button("暂停") {}
-                Button("急停", role: .destructive) {}
+                    .disabled(true)
+                Button("暂停") { onPause() }
+                    .disabled(!modeEntry.isRunning)
+                Button("急停", role: .destructive) { onEmergencyStop() }
+                    .disabled(!modeEntry.isRunning)
             }
             .buttonStyle(.bordered)
 
-            Text("自动对局/暂停/急停在 Session 闭环接入后启用；进入流程为单次点击验证（M0-8 接入步骤引擎）")
+            if let step = modeEntry.currentStep {
+                Text("进行中：\(step)")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else if let summary = modeEntry.lastSummary {
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("M0-8：主菜单 → 新手场 → 真人匹配 → 棋盘；未知界面/匹配超时会暂停，自动对局待 Session 闭环")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

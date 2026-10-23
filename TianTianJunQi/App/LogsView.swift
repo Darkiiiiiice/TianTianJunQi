@@ -35,7 +35,7 @@ struct LogsView: View {
                 .width(min: 90, ideal: 110)
 
                 TableColumn("迁移") { entry in
-                    Text("\(entry.from.label) → \(entry.to.label)")
+                    Text(entry.isNote ? "·" : "\(entry.from.label) → \(entry.to.label)")
                 }
                 .width(min: 150, ideal: 190)
 

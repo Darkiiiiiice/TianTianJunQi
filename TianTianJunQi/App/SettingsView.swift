@@ -20,11 +20,13 @@ struct SettingsView: View {
                 LabeledContent("校准状态", value: "未校准（M1-1 接入向导）")
             }
             Section("棋盘配置") {
-                LabeledContent("棋盘规格", value: "4 × 8（占位，以 P0-3 实测为准）")
+                LabeledContent("棋盘规格", value: "5 × 12（P0-3 实测，30 枚/方）")
+                LabeledContent("场次", value: "新手场（每局 50 金币）")
             }
             Section("对手模式") {
-                LabeledContent("默认对手", value: "人机练习（占位）")
-                LabeledContent("真人匹配自动连开", value: "关闭（默认）")
+                LabeledContent("默认对手", value: "真人匹配（无单机模式）")
+                LabeledContent("真人匹配自动连开", value: "开启（用户显式选择）")
+                LabeledContent("匹配超时", value: "120 秒（超时暂停）")
             }
             Section("模型") {
                 LabeledContent("当前模型", value: "无（M3-4 接入加载）")

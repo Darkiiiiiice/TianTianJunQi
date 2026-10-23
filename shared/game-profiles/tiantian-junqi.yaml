@@ -9,7 +9,7 @@ window:
   # WeChatAppEx 只负责渲染、名下无窗口；判定 = owner bundle 候选池 + 标题命中
   ownerBundleIDs: [com.tencent.xinWeChat, com.tencent.flue.WeChatAppEx]
   titleContains: [天天军棋]              # 实测标题"腾讯天天军棋"；需要屏幕录制权限
-  minSize: { width: 300, height: 300 }
+  minSize: { width: 240, height: 180 }   # 窗口可缩小到 368x251，不能卡 300 高
   observed:
     title: 腾讯天天军棋
     sizePt: 约960x540                    # 可随用户缩放，每次会话重新校验
@@ -19,21 +19,44 @@ window:
   entry:                                 # P0-2 粗测：主菜单"翻翻棋"入口（蓝色大按钮，右侧）
     text: 翻翻翻棋                       # 艺术字，OCR 关键字用"翻棋"更稳
     normRect: { x: 0.52, y: 0.26, w: 0.33, h: 0.17 }  # 相对整窗归一化，粗测
+  venue:                                 # P0-4 实测：入口后是场次选择页，无单机/练习
+    text: 新手场
+    normRect: { x: 0.235, y: 0.184, w: 0.185, h: 0.673 }  # 绿卡整卡；OCR 用卡片文字中心
+    alternatives: [普通场, 大师场]
+    note: 点击场次卡立即开始匹配，没有"开始/确认"二次确认
 
 board:
-  rows: 4                              # 待实测 P0-3（公开资料常见 4，禁止硬编码进代码）
-  cols: 8                              # 待实测 P0-3
+  rows: 5                              # P0-3 截图实测：5 行 × 12 列 = 60 格
+  cols: 12
+  piecesPerSide: 30                    # 开局满盘 60 枚（30/方）；逐类数量待清点
   theme: default                       # 待实测；校准文件记录 theme，不匹配则要求重新校准
 
 opponent:
-  default: aiPractice                  # aiPractice | quickMatch | friendRoom；默认人机练习
-  aiPracticeEntryExists: null          # 待实测 P0-4
-  autoContinueAI: true                 # 人机练习可自动连开
-  autoContinueHuman: false             # 真人匹配默认不自动连开
+  default: quickMatch                  # P0-4 实测：无单机/练习，只能真人匹配
+  aiPracticeEntryExists: false
+  venue: 新手场                        # 新手场 / 普通场 / 大师场；点击即开始匹配
+  autoContinueAI: false                # 无单机模式（保留字段供游戏后续版本）
+  autoContinueHuman: true              # 用户 2026-10-23 显式选择：允许自动再来一局，无每日局数上限
+  ticketCost: 50                       # 每局扣 50 金币（匹配页文案实测）
+  matchTimeout: 120                    # 匹配等待上限（秒），超时暂停，不重复点击
 
 actionSpace:
   # tap_cell 索引范围 0..rows*cols-1，由 board 推导，不单独配置
-  buttons: [start, again, close, confirm] # 待实测 P0-2/P0-4 增补
+  buttons: [venue, again, switchOpponent, close, confirm] # P0-4 实测：无 start/人机按钮
+
+flow:
+  # P0-4 实测的界面链：main → venue → matching → board → result
+  # 判据为 OCR 关键词；竖排文字需同时识别原图与逆时针旋转 90° 的画面
+  # 分类优先级：popup > result > board > matching > venue > main
+  screens:
+    main: { keywords: [翻棋] }
+    venue: { keywords: [最低携带, 无限制, 新手场, 普通场, 大师场] }
+    matching: { keywords: [正在匹配小伙伴, 匹配小伙伴, 每局扣除门票] }
+    board: { keywords: [翻旗定阵营, 连续两次翻到同色, 最近翻旗, '第 N 步（正则）'] }
+    result: { keywords: [再来一局, 切换对手, 战败, 战胜, 投降] }
+    popup: { keywords: [游戏规则, 玩法规则, 布局规则, 吃子规则, 行走路线] }
+  resultActions: [再来一局, 切换对手]   # 两者都会重新进入真人匹配
+  note: 无房卡/取消匹配按钮；匹配中只能等待或由用户手动退出；弹窗一律暂停
 
 reward:
   win: 1.0

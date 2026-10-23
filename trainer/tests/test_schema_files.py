@@ -30,5 +30,8 @@ def test_game_profile_parses():
     )
     assert data["game"] == "天天军棋"
     assert data["mode"] == "翻翻棋"
-    assert data["window"]["ownerName"] == "WeChatAppEx"
-    assert data["opponent"]["default"] == "aiPractice"
+    assert "com.tencent.xinWeChat" in data["window"]["ownerBundleIDs"]
+    assert "天天军棋" in data["window"]["titleContains"]
+    assert data["opponent"]["default"] in {"aiPractice", "quickMatch", "friendRoom"}
+    assert data["board"]["rows"] > 0
+    assert data["board"]["cols"] > 0

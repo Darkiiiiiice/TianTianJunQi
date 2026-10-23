@@ -9,6 +9,7 @@ struct MainView: View {
     @State private var capture = CaptureService()
     @State private var screenState = ScreenStateService()
     @State private var injector = InputInjector()
+    @State private var modeEntry = ModeEntry()
     @State private var selection: Page = .overview
 
     /// 周期复查定时器：授权失效检测（设计文档 §9.6）。
@@ -27,8 +28,10 @@ struct MainView: View {
         TabView(selection: $selection) {
             OverviewView(
                 store: store, permissions: permissions, windows: windows,
-                capture: capture, screenState: screenState,
-                onEnterMode: { Task { await enterMode() } }
+                capture: capture, screenState: screenState, modeEntry: modeEntry,
+                onEnterMode: { Task { await enterMode() } },
+                onPause: { pause(reason: "用户暂停") },
+                onEmergencyStop: { pause(reason: "用户急停") }
             )
             .tabItem { Label("概览", systemImage: "gauge.with.needle") }
             .tag(Page.overview)
@@ -94,23 +97,27 @@ struct MainView: View {
         }
     }
 
-    /// 进入翻翻棋（M0-6/M0-7 链路验证）：OCR 定位入口 → 单次点击注入。
-    /// 完整 9 步步骤引擎（谓词校验/重试/弹窗处理）在 M0-8 落地。
+    /// 进入翻翻棋（M0-8）：激活窗口 → 主菜单 → 场次页 → 新手场 → 匹配 → 棋盘。
+    /// 真人匹配：进入后按用户配置执行；未知界面/超时暂停，不盲点。
     private func enterMode() async {
-        guard let window = windows.effectiveCandidate, let frame = capture.latestFrame else { return }
-        await screenState.analyzeIfNeeded(frame: frame, minInterval: 0)
-        guard let entry = screenState.entryRect else {
-            store.transition(to: .failed, reason: "进入失败：OCR 未定位到翻翻棋入口")
+        guard let window = windows.effectiveCandidate else {
+            store.transition(to: .failed, reason: "进入失败：游戏窗口不存在")
             return
         }
-        do {
-            try await injector.click(
-                normalized: CGPoint(x: entry.midX, y: entry.midY),
-                in: window.bounds
-            )
-            store.transition(to: .enteringMode, reason: "已点击入口，等待模式页（验证点）")
-        } catch {
-            store.transition(to: .failed, reason: "点击注入失败：\(error.localizedDescription)")
+        await modeEntry.enter(
+            window: window,
+            capture: capture,
+            screenState: screenState,
+            injector: injector,
+            store: store
+        )
+    }
+
+    /// 暂停/急停：取消进入流程并进入暂停态。
+    private func pause(reason: String) {
+        modeEntry.cancel()
+        if !modeEntry.isRunning {
+            store.transition(to: .paused, reason: reason)
         }
     }
 }

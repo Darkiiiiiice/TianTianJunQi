@@ -34,19 +34,21 @@ enum AppState: String, CaseIterable, Sendable {
     }
 }
 
-/// 一次状态迁移记录。
+/// 一次状态迁移记录；`isNote` 表示只记录原因、不改变状态（步骤日志）。
 struct AppStateChange: Identifiable, Sendable {
     let id = UUID()
     let timestamp: Date
     let from: AppState
     let to: AppState
     let reason: String
+    let isNote: Bool
 
-    init(from: AppState, to: AppState, reason: String) {
+    init(from: AppState, to: AppState, reason: String, isNote: Bool = false) {
         self.timestamp = Date()
         self.from = from
         self.to = to
         self.reason = reason
+        self.isNote = isNote
     }
 }
 
@@ -63,10 +65,19 @@ final class AppStateStore {
     /// 迁移到新状态；相同状态忽略。
     func transition(to newState: AppState, reason: String) {
         guard newState != state else { return }
-        changes.append(AppStateChange(from: state, to: newState, reason: reason))
+        append(AppStateChange(from: state, to: newState, reason: reason))
+        state = newState
+    }
+
+    /// 只记录一条日志，不改变状态（M0-8 步骤耗时/点击明细）。
+    func note(_ reason: String) {
+        append(AppStateChange(from: state, to: state, reason: reason, isNote: true))
+    }
+
+    private func append(_ change: AppStateChange) {
+        changes.append(change)
         if changes.count > capacity {
             changes.removeFirst(changes.count - capacity)
         }
-        state = newState
     }
 }

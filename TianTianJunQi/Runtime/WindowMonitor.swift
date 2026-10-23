@@ -13,10 +13,11 @@ struct WindowMatch: Equatable, Sendable {
     var minSize: CGSize
 
     /// 默认按腾讯天天军棋匹配（P0-1 实测：title=腾讯天天军棋，929x567，owner=主微信进程）。
+    /// minSize 放宽到 240x180：小游戏窗口可被用户缩到 368x251，原 300 高度会漏检。
     static let tianTianJunQi = WindowMatch(
         ownerBundleIDs: ["com.tencent.xinWeChat", "com.tencent.flue.WeChatAppEx"],
         titleContains: ["天天军棋"],
-        minSize: CGSize(width: 300, height: 300)
+        minSize: CGSize(width: 240, height: 180)
     )
 }
 
