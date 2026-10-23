@@ -30,11 +30,12 @@ struct OverviewView: View {
     }
 
     private var statusSection: some View {
-        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
-            GridRow {
-                Text("运行状态").foregroundStyle(.secondary)
-                Text(store.state.label).font(.title3.bold())
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
+                GridRow {
+                    Text("运行状态").foregroundStyle(.secondary)
+                    Text(store.state.label).font(.title3.bold())
+                }
             GridRow {
                 Text("游戏窗口").foregroundStyle(.secondary)
                 windowStatusText
@@ -65,8 +66,43 @@ struct OverviewView: View {
                         .foregroundStyle(.orange)
                 }
             }
+            }
+
+            windowPicker
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 手动选择窗口：自动发现失败时的兜底（可从所有 layer-0 窗口中指定）。
+    private var windowPicker: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(windows.allWindows) { candidate in
+                    Button(candidateLabel(candidate)) {
+                        windows.selectedWindowID = candidate.id
+                    }
+                }
+                if windows.selectedWindowID != nil {
+                    Divider()
+                    Button("恢复自动选择") { windows.selectedWindowID = nil }
+                }
+            } label: {
+                Label("手动选择窗口", systemImage: "scope")
+            }
+            .disabled(windows.allWindows.isEmpty)
+
+            if windows.selectedWindowID != nil {
+                Text("手动指定")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private func candidateLabel(_ candidate: GameWindowCandidate) -> String {
+        let title = candidate.title.isEmpty ? "无标题" : candidate.title
+        let size = "\(Int(candidate.bounds.width))×\(Int(candidate.bounds.height))"
+        return "\(title) · \(size) · \(candidate.bundleID)"
     }
 
     private var windowStatusText: Text {

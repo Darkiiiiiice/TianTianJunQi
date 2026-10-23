@@ -44,6 +44,8 @@ final class WindowMonitor {
 
     private(set) var isWeChatRunning = false
     private(set) var candidates: [GameWindowCandidate] = []
+    /// 全量 layer-0 窗口（不限 owner），供手动选择兜底（自动发现失败时用）。
+    private(set) var allWindows: [GameWindowCandidate] = []
 
     /// 用户显式选择的窗口（多候选时）；nil 表示自动。
     var selectedWindowID: CGWindowID?
@@ -81,9 +83,9 @@ final class WindowMonitor {
         effectiveCandidate?.id
     }
 
-    /// 自动选择的目标候选：标题命中 > WeChatAppEx 自有窗口。
+    /// 自动选择的目标候选：手动指定 > 标题命中 > WeChatAppEx 自有窗口。
     var effectiveCandidate: GameWindowCandidate? {
-        if let selectedWindowID, let picked = candidates.first(where: { $0.id == selectedWindowID }) {
+        if let selectedWindowID, let picked = allWindows.first(where: { $0.id == selectedWindowID }) {
             return picked
         }
         // 标题命中优先（P0-1 实测：主微信进程持有游戏窗口，标题"腾讯天天军棋"）
@@ -102,17 +104,20 @@ final class WindowMonitor {
         isWeChatRunning = !NSRunningApplication.runningApplications(
             withBundleIdentifier: Self.mainAppBundleID
         ).isEmpty
-        candidates = Self.enumerate(match: match)
+        let result = Self.enumerate(match: match)
+        allWindows = result.all
+        candidates = result.matched
     }
 
-    private static func enumerate(match: WindowMatch) -> [GameWindowCandidate] {
+    /// 一次枚举同时产出：全量窗口（手动选择用）与 owner 过滤后的候选（自动匹配用）。
+    private static func enumerate(match: WindowMatch) -> (all: [GameWindowCandidate], matched: [GameWindowCandidate]) {
         guard let raw = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
             kCGNullWindowID
         ) as? [[String: Any]]
-        else { return [] }
+        else { return (all: [], matched: []) }
 
-        return raw.compactMap { info in
+        let all: [GameWindowCandidate] = raw.compactMap { info in
             guard let windowID = info[kCGWindowNumber as String] as? CGWindowID,
                   let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue,
                   layer == 0, // 普通窗口；排除悬浮条/托盘等特殊层
@@ -135,7 +140,6 @@ final class WindowMonitor {
 
             let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
             let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
-            guard match.ownerBundleIDs.contains(bundleID) else { return nil }
 
             return GameWindowCandidate(
                 id: windowID,
@@ -147,5 +151,7 @@ final class WindowMonitor {
                 bounds: bounds
             )
         }
+        let matched = all.filter { match.ownerBundleIDs.contains($0.bundleID) }
+        return (all, matched)
     }
 }
