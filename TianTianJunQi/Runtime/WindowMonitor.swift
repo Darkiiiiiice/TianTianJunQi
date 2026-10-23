@@ -3,13 +3,19 @@ import CoreGraphics
 
 /// 游戏窗口匹配配置（对应 game-profile 的 window 字段；P0-1 实测后回填 shared/game-profiles）。
 struct WindowMatch: Equatable, Sendable {
-    var ownerName: String
+    /// 主判定：窗口 owner 进程的 bundle id（微信小游戏渲染进程）。
+    var bundleID: String
+    /// 兜底判定：bundle id 拿不到时匹配 owner 显示名。
+    /// 注意：本机实测 kCGWindowOwnerName 是本地化名"微信"而非 WeChatAppEx。
+    var ownerNameFallback: String
+    /// 最小尺寸：排除悬浮条/托盘等辅助小窗。
     var minSize: CGSize
 
     /// 默认按微信小游戏 WeChatAppEx 匹配（设计文档 §2 本机实测结论）。
     static let tianTianJunQi = WindowMatch(
-        ownerName: "WeChatAppEx",
-        minSize: CGSize(width: 360, height: 640)
+        bundleID: "com.tencent.flue.WeChatAppEx",
+        ownerNameFallback: "WeChatAppEx",
+        minSize: CGSize(width: 300, height: 300)
     )
 }
 
@@ -18,6 +24,7 @@ struct GameWindowCandidate: Identifiable, Equatable, Sendable {
     let id: CGWindowID
     let ownerPID: pid_t
     let ownerName: String
+    let bundleID: String
     let title: String
     /// 全局屏幕坐标（point）。
     let bounds: CGRect
@@ -90,9 +97,9 @@ final class WindowMonitor {
         else { return [] }
 
         return raw.compactMap { info in
-            guard let ownerName = info[kCGWindowOwnerName as String] as? String,
-                  ownerName == match.ownerName,
-                  let windowID = info[kCGWindowNumber as String] as? CGWindowID,
+            guard let windowID = info[kCGWindowNumber as String] as? CGWindowID,
+                  let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue,
+                  layer == 0, // 普通窗口；排除悬浮条/托盘等特殊层
                   let boundsDict = info[kCGWindowBounds as String] as? [String: NSNumber],
                   let width = boundsDict["Width"]?.doubleValue,
                   let height = boundsDict["Height"]?.doubleValue
@@ -110,10 +117,22 @@ final class WindowMonitor {
                   bounds.height >= match.minSize.height
             else { return nil }
 
+            let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
+            let ownerName = info[kCGWindowOwnerName as String] as? String ?? ""
+            let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+
+            // 判定：owner 进程 bundleID 优先（显示名是本地化的"微信"，不可靠）；
+            // bundleID 拿不到时退回 ownerName 兜底
+            let isMatch = bundleID != nil
+                ? bundleID == match.bundleID
+                : ownerName == match.ownerNameFallback
+            guard isMatch else { return nil }
+
             return GameWindowCandidate(
                 id: windowID,
-                ownerPID: (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0,
+                ownerPID: pid,
                 ownerName: ownerName,
+                bundleID: bundleID ?? "",
                 // 其他进程窗口标题需要屏幕录制权限；标题只作加分项（§3.1）
                 title: info[kCGWindowName as String] as? String ?? "",
                 bounds: bounds
