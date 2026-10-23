@@ -3,6 +3,7 @@ import SwiftUI
 /// 概览页：运行状态摘要 + 操作按钮 + 竖屏克隆画面占位（M0-11 接入 SCStream 实时帧）。
 struct OverviewView: View {
     let store: AppStateStore
+    let permissions: PermissionStore
 
     var body: some View {
         HStack(alignment: .top, spacing: 32) {
@@ -39,6 +40,16 @@ struct OverviewView: View {
             GridRow {
                 Text("模型").foregroundStyle(.secondary)
                 Text("无（M3-4 接入）").foregroundStyle(.secondary)
+            }
+            GridRow {
+                Text("权限").foregroundStyle(.secondary)
+                if permissions.allGranted {
+                    Text("已就绪（\(permissions.grantedCount)/\(PermissionKind.allCases.count)）")
+                        .foregroundStyle(.green)
+                } else {
+                    Text("缺 \(permissions.missing.map(\.label).joined(separator: "、"))")
+                        .foregroundStyle(.orange)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
