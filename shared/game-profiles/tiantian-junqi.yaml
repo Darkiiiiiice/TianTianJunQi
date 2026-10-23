@@ -1,0 +1,34 @@
+# 天天军棋·翻翻棋 游戏配置（对应设计文档 §5 GameProfile）
+# 标注"待实测"的字段由开发计划 P0 任务回填；P0 未完成前为占位值。
+
+game: 天天军棋
+mode: 翻翻棋
+
+window:
+  ownerName: WeChatAppEx
+  bundleID: com.tencent.flue.WeChatAppEx
+  titleContains: []                    # 窗口标题经常为空，只作加分项
+  minSize: { width: 360, height: 640 } # 待实测 P0-1
+
+board:
+  rows: 4                              # 待实测 P0-3（公开资料常见 4，禁止硬编码进代码）
+  cols: 8                              # 待实测 P0-3
+  theme: default                       # 待实测；校准文件记录 theme，不匹配则要求重新校准
+
+opponent:
+  default: aiPractice                  # aiPractice | quickMatch | friendRoom；默认人机练习
+  aiPracticeEntryExists: null          # 待实测 P0-4
+  autoContinueAI: true                 # 人机练习可自动连开
+  autoContinueHuman: false             # 真人匹配默认不自动连开
+
+actionSpace:
+  # tap_cell 索引范围 0..rows*cols-1，由 board 推导，不单独配置
+  buttons: [start, again, close, confirm] # 待实测 P0-2/P0-4 增补
+
+reward:
+  win: 1.0
+  loss: -1.0
+  draw: 0.0
+  captureValue: {}                     # 待实测 P0-5 后按棋子价值填充
+  illegalActionPenalty: -0.1
+  timeoutPenalty: 0.0

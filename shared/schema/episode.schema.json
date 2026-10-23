@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "episode.schema.json",
+  "title": "Episode",
+  "description": "一局对局元信息；状态/动作明细见 states.jsonl / actions.jsonl（设计文档 §5）",
+  "type": "object",
+  "required": ["id", "mode", "startedAt", "duration", "moves", "result"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string" },
+    "mode": { "type": "string" },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "duration": { "type": "number", "minimum": 0 },
+    "moves": { "type": "integer", "minimum": 0 },
+    "result": { "enum": ["win", "loss", "draw", "timeout", "error"] },
+    "score": { "type": "integer" }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manifest.schema.json",
+  "title": "ModelManifest",
+  "description": "manifest.json：模型来源、指标、版本追溯（设计文档 §5、§8.6）",
+  "type": "object",
+  "required": [
+    "modelVersion",
+    "modelFile",
+    "architectureFile",
+    "rulesVersion",
+    "perceptionVersion",
+    "datasetHash",
+    "createdAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "modelVersion": { "type": "integer", "minimum": 1 },
+    "modelFile": { "type": "string" },
+    "architectureFile": { "type": "string" },
+    "rulesVersion": { "type": "string" },
+    "perceptionVersion": { "type": "string" },
+    "gameVersion": { "type": ["string", "null"] },
+    "datasetHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

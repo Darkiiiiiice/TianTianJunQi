@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "action.schema.json",
+  "title": "Action",
+  "description": "单个动作：点击格子 / 点击按钮 / 等待（设计文档 §7.3、§8.3）",
+  "anyOf": [
+    {
+      "type": "object",
+      "required": ["type", "cell"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "tap_cell" },
+        "cell": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["type", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "tap_button" },
+        "name": {
+          "type": "string",
+          "examples": ["start", "again", "close", "confirm"]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["type", "ms"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "wait" },
+        "ms": { "type": "integer", "minimum": 0 }
+      }
+    }
+  ]
+}

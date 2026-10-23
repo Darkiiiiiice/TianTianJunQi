@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "game_state.schema.json",
+  "title": "GameState",
+  "description": "棋盘逻辑状态，用于回合录制与 MLX 特征输入（设计文档 §7.3）",
+  "type": "object",
+  "required": ["schema", "phase", "board", "turn", "legal_actions"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": 1 },
+    "phase": { "enum": ["playing", "result"] },
+    "board": {
+      "type": "object",
+      "required": ["rows", "cols", "cells"],
+      "additionalProperties": false,
+      "properties": {
+        "rows": { "type": "integer", "minimum": 1 },
+        "cols": { "type": "integer", "minimum": 1 },
+        "cells": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["i", "state"],
+            "additionalProperties": false,
+            "properties": {
+              "i": { "type": "integer", "minimum": 0 },
+              "state": { "enum": ["empty", "hidden", "revealed", "unknown"] },
+              "color": { "enum": ["red", "black", null] },
+              "piece": { "type": ["string", "null"] },
+              "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "turn": { "enum": ["red", "black"] },
+    "selected": { "type": ["integer", "null"], "minimum": 0 },
+    "legal_actions": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0 }
+    },
+    "timers": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "me": { "type": ["number", "null"], "minimum": 0 },
+        "opponent": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "last_move": {
+      "type": ["object", "null"],
+      "required": ["from", "to"],
+      "additionalProperties": false,
+      "properties": {
+        "from": { "type": "integer", "minimum": 0 },
+        "to": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
