@@ -5,10 +5,20 @@ game: 天天军棋
 mode: 翻翻棋
 
 window:
-  ownerName: WeChatAppEx               # 兜底显示名；本机实测 owner 显示名是"微信"，判定以 bundleID 为准
-  bundleID: com.tencent.flue.WeChatAppEx
-  titleContains: []                    # 窗口标题经常为空，只作加分项
-  minSize: { width: 300, height: 300 } # 待实测 P0-1（原占位 360x640 会误过滤真实窗口）
+  # P0-1 实测（2026-10-23，微信 4.x）：小游戏窗口由主微信进程持有，
+  # WeChatAppEx 只负责渲染、名下无窗口；判定 = owner bundle 候选池 + 标题命中
+  ownerBundleIDs: [com.tencent.xinWeChat, com.tencent.flue.WeChatAppEx]
+  titleContains: [天天军棋]              # 实测标题"腾讯天天军棋"；需要屏幕录制权限
+  minSize: { width: 300, height: 300 }
+  observed:
+    title: 腾讯天天军棋
+    sizePt: 约960x540                    # 可随用户缩放，每次会话重新校验
+    owner: com.tencent.xinWeChat
+    contentForm: landscape-full          # 横版铺满窗口，无黑边
+  canvasROI: { x: 0.0, y: 0.07, w: 1.0, h: 0.93 }   # 粗测：排除顶部约 40px 小程序标题栏（M1-1 校准精修）
+  entry:                                 # P0-2 粗测：主菜单"翻翻棋"入口（蓝色大按钮，右侧）
+    text: 翻翻翻棋                       # 艺术字，OCR 关键字用"翻棋"更稳
+    normRect: { x: 0.52, y: 0.26, w: 0.33, h: 0.17 }  # 相对整窗归一化，粗测
 
 board:
   rows: 4                              # 待实测 P0-3（公开资料常见 4，禁止硬编码进代码）

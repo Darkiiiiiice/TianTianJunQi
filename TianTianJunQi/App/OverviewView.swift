@@ -68,10 +68,14 @@ struct OverviewView: View {
         if !windows.isWeChatRunning {
             return Text("微信未运行").foregroundStyle(.orange)
         }
-        if windows.candidates.isEmpty {
-            return Text("未找到游戏窗口").foregroundStyle(.orange)
+        if let target = windows.effectiveCandidate {
+            return Text(target.title.isEmpty ? "已检测" : "已检测 · \(target.title)")
+                .foregroundStyle(.green)
         }
-        return Text("已检测 · \(windows.candidates.count) 个候选").foregroundStyle(.green)
+        if windows.candidates.isEmpty {
+            return Text("未检测到微信窗口").foregroundStyle(.orange)
+        }
+        return Text("未找到游戏窗口（\(windows.candidates.count) 个微信窗口）").foregroundStyle(.orange)
     }
 
     private var actionSection: some View {
