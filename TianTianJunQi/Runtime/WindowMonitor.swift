@@ -112,8 +112,10 @@ final class WindowMonitor {
 
     /// 一次枚举同时产出：全量窗口（手动选择用）与 owner 过滤后的候选（自动匹配用）。
     private static func enumerate(match: WindowMatch) -> (all: [GameWindowCandidate], matched: [GameWindowCandidate]) {
+        // 用 .optionAll 而不是 .optionOnScreenOnly：窗口被拖到屏幕外时仍要能被发现，
+        // 进入流程才能用 AX 把它移回可见区域（P0-6 实测：用户会把窗口拖出屏幕）。
         guard let raw = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements],
+            [.optionAll, .excludeDesktopElements],
             kCGNullWindowID
         ) as? [[String: Any]]
         else { return (all: [], matched: []) }

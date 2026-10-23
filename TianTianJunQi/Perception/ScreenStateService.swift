@@ -49,7 +49,10 @@ final class ScreenStateService {
     static let mainKeyword = "翻棋"
     static let venueKeyword = "新手场"
 
-    private static let mainKeywords = ["翻棋"]
+    private static let mainKeywords = [
+        "翻棋", "四国军棋", "排位赛", "每日签到", "免费抽奖",
+        "大转盘", "任务", "布局", "商城",
+    ]
     private static let venueKeywords = ["最低携带", "无限制", "新手场", "普通场", "大师场"]
     private static let matchingKeywords = ["正在匹配小伙伴", "匹配小伙伴", "每局扣除门票"]
     private static let boardKeywords = ["翻旗定阵营", "连续两次翻到同色", "最近翻旗"]
@@ -87,8 +90,9 @@ final class ScreenStateService {
         lastOCRAt = Date()
 
         let pixelBuffer = frame.pixelBuffer
+        let contentRect = frame.contentRect
         let result = await Task.detached(priority: .userInitiated) {
-            Self.recognize(pixelBuffer)
+            Self.recognize(pixelBuffer, contentRect: contentRect)
         }.value
 
         hits = result
@@ -130,27 +134,52 @@ final class ScreenStateService {
     // MARK: - Vision
 
     /// 两个方向各跑一遍：横排文字 + 逆时针转正后的竖排文字。
-    nonisolated private static func recognize(_ pixelBuffer: CVPixelBuffer) -> [OCRText] {
-        var results = recognize(pixelBuffer: pixelBuffer)
-
+    /// 先裁到内容区（SCStream 帧是小游戏原生画布，四周有黑边），
+    /// 裁完的归一化坐标才与窗口坐标一一对应。
+    /// 小窗口先放大再识别：368×251 的窗口里"翻翻棋"艺术字会漏识别（P0-4 实测）。
+    nonisolated private static func recognize(
+        _ pixelBuffer: CVPixelBuffer,
+        contentRect: CGRect
+    ) -> [OCRText] {
         let image = CIImage(cvPixelBuffer: pixelBuffer)
         let extent = image.extent
-        guard extent.width > 0, extent.height > 0 else { return results }
+        guard extent.width > 0, extent.height > 0 else { return [] }
+
+        let crop = CGRect(
+            x: extent.minX + contentRect.minX * extent.width,
+            y: extent.minY + contentRect.minY * extent.height,
+            width: contentRect.width * extent.width,
+            height: contentRect.height * extent.height
+        )
+        let cropped = contentRect == CapturedFrame.fullFrame ? image : image.cropped(to: crop)
+
+        // 2× 放大是实测有效的阈值：368×251 窗口 2× 后能认出"翻翻棋"，
+        // 1.6× 仍会识别成"翻翻旗"。
+        let scale: CGFloat = cropped.extent.width < 1200 ? 2.0 : 1.0
+        let prepared = scale > 1
+            ? cropped.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            : cropped
+        guard let base = ciContext.createCGImage(prepared, from: prepared.extent) else {
+            return []
+        }
+        var results = perform(
+            handler: VNImageRequestHandler(cgImage: base, orientation: .up),
+            rotatedCCW: false
+        )
 
         // 逆时针 90°：(x, y) → (H - y, x)，把顺时针旋转的文字转正。
-        let rotate = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: extent.height, ty: 0)
-        let rotated = image.transformed(by: rotate)
-        guard let cgImage = ciContext.createCGImage(rotated, from: rotated.extent.integral) else {
-            return results
-        }
-        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up)
-        results += perform(handler: handler, rotatedCCW: true)
+        let rotate = CGAffineTransform(
+            a: 0, b: 1, c: -1, d: 0, tx: prepared.extent.height, ty: 0
+        )
+        let rotated = prepared.transformed(by: rotate)
+        guard let rotatedImage = ciContext.createCGImage(
+            rotated, from: rotated.extent.integral
+        ) else { return results }
+        results += perform(
+            handler: VNImageRequestHandler(cgImage: rotatedImage, orientation: .up),
+            rotatedCCW: true
+        )
         return results
-    }
-
-    nonisolated private static func recognize(pixelBuffer: CVPixelBuffer) -> [OCRText] {
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up)
-        return perform(handler: handler, rotatedCCW: false)
     }
 
     nonisolated private static func perform(

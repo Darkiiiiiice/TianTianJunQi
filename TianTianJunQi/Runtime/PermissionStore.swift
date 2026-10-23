@@ -26,6 +26,12 @@ final class PermissionStore {
         grantedCount == PermissionKind.allCases.count
     }
 
+    /// M0-8 进入流程/抓帧只需要屏幕录制 + 辅助功能；
+    /// 输入监控只在 M2-8 录制人类示范时需要，不应阻塞进入牌局。
+    var controlReady: Bool {
+        statuses[.screenRecording] == .granted && statuses[.accessibility] == .granted
+    }
+
     /// 未授权的权限（用于概览页提示）。
     var missing: [PermissionKind] {
         PermissionKind.allCases.filter { statuses[$0] != .granted }

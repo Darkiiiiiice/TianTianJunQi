@@ -62,6 +62,10 @@ struct MainView: View {
             windows.refresh()
             syncCapture()
             updateRuntimeState()
+            // 窗口被用户缩放后同步抓帧基准尺寸（scale 换算用）。
+            if let candidate = windows.effectiveCandidate {
+                capture.updateWindowSize(candidate.bounds.size)
+            }
             if let frame = capture.latestFrame {
                 Task { await screenState.analyzeIfNeeded(frame: frame) }
             }
@@ -75,7 +79,7 @@ struct MainView: View {
 
     /// 根据权限与窗口检测结果同步抓帧目标。
     private func syncCapture() {
-        guard permissions.allGranted, let windowID = windows.effectiveWindowID else {
+        guard permissions.controlReady, let windowID = windows.effectiveWindowID else {
             if capture.isCapturing {
                 Task { await capture.stop() }
             }
@@ -100,12 +104,13 @@ struct MainView: View {
     /// 进入翻翻棋（M0-8）：激活窗口 → 主菜单 → 场次页 → 新手场 → 匹配 → 棋盘。
     /// 真人匹配：进入后按用户配置执行；未知界面/超时暂停，不盲点。
     private func enterMode() async {
-        guard let window = windows.effectiveCandidate else {
+        windows.refresh()
+        guard windows.effectiveCandidate != nil else {
             store.transition(to: .failed, reason: "进入失败：游戏窗口不存在")
             return
         }
         await modeEntry.enter(
-            window: window,
+            windows: windows,
             capture: capture,
             screenState: screenState,
             injector: injector,

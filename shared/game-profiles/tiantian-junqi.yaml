@@ -16,9 +16,29 @@ window:
     owner: com.tencent.xinWeChat
     contentForm: landscape-full          # 横版铺满窗口，无黑边
   canvasROI: { x: 0.0, y: 0.07, w: 1.0, h: 0.93 }   # 粗测：排除顶部约 40px 小程序标题栏（M1-1 校准精修）
+  # 2026-10-23 实测：SCStream 抓帧按小程序原生画布输出（1920×1080），
+  # 游戏内容只占左上角 928×608，其余是黑边。必须裁到内容区，
+  # 否则预览有大片黑区、OCR 归一化坐标相对窗口整体偏移（点击落空）。
+  capture:
+    nativeCanvas: { width: 1920, height: 1080 }
+    contentInCanvas: { x: 0.0, y: 0.0, w: 0.483, h: 0.563 }  # 运行时由 detectContentRect 动态检测
+    contentDetect: rowColumnProfile                        # 行/列剖面找非黑内容区
   entry:                                 # P0-2 粗测：主菜单"翻翻棋"入口（蓝色大按钮，右侧）
-    text: 翻翻翻棋                       # 艺术字，OCR 关键字用"翻棋"更稳
+    text: 翻翻棋                         # 艺术字，OCR 关键字用"翻棋"更稳
     normRect: { x: 0.52, y: 0.26, w: 0.33, h: 0.17 }  # 相对整窗归一化，粗测
+    # OCR 漏识时的安全点击区：覆盖大/小窗口都能命中的按钮中心
+    fallbackNormRect: { x: 0.55, y: 0.28, w: 0.34, h: 0.18 }
+  # 2026-10-23 注入实测：postToPid 不移动指针，但微信小游戏忽略定向事件。
+  # 采用全局 HID 点击 + 立即还原指针；点击前必须 AX raise、校验目标点最前窗口、
+  # 重新读取窗口 bounds；目标出屏时用 AX 把窗口移回可见区域。
+  clickPolicy:
+    delivery: globalWithCursorRestore
+    postToPidWorks: false
+    preserveCursor: true
+    respectUserInput: true
+    requireAXRaise: true
+    requireOnScreen: true
+    moveWindowOnScreen: true
   venue:                                 # P0-4 实测：入口后是场次选择页，无单机/练习
     text: 新手场
     normRect: { x: 0.235, y: 0.184, w: 0.185, h: 0.673 }  # 绿卡整卡；OCR 用卡片文字中心
@@ -48,8 +68,9 @@ flow:
   # P0-4 实测的界面链：main → venue → matching → board → result
   # 判据为 OCR 关键词；竖排文字需同时识别原图与逆时针旋转 90° 的画面
   # 分类优先级：popup > result > board > matching > venue > main
+  # 小窗口先 2× 放大再 OCR；主菜单另用底部栏兜底（368×251 实测“翻翻棋”会漏识）
   screens:
-    main: { keywords: [翻棋] }
+    main: { keywords: [翻棋, 四国军棋, 排位赛, 每日签到, 免费抽奖, 大转盘, 任务, 布局, 商城] }
     venue: { keywords: [最低携带, 无限制, 新手场, 普通场, 大师场] }
     matching: { keywords: [正在匹配小伙伴, 匹配小伙伴, 每局扣除门票] }
     board: { keywords: [翻旗定阵营, 连续两次翻到同色, 最近翻旗, '第 N 步（正则）'] }
