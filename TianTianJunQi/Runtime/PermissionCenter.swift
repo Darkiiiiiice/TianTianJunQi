@@ -61,9 +61,38 @@ enum PermissionCenter {
             AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
         case .inputMonitoring:
             if !CGPreflightListenEventAccess() {
-                CGRequestListenEventAccess()
+                _ = CGRequestListenEventAccess()
+                // 系统弹窗只在首次请求时出现；部分版本/“已询问”状态下不弹。
+                // 实际创建一次性 listen-only tap 是更可靠的触发方式（M2-8 之外的常规做法）。
+                triggerListenProbe()
             }
         }
+    }
+
+    /// 创建一次性 listen-only 事件 tap 触发系统授权弹窗；不加入 run loop，创建即销毁。
+    private static func triggerListenProbe() {
+        let mask = CGEventMask(
+            (1 << CGEventType.mouseMoved.rawValue)
+                | (1 << CGEventType.leftMouseDown.rawValue)
+                | (1 << CGEventType.scrollWheel.rawValue)
+        )
+        // 本 SDK 的 apinotes 把 CGEventTapCreate 重命名为 CGEvent.tapCreate，
+        // 且未导出 CGEventTapLocation 等 C 枚举的 Swift case 名，用头文件中的原始值：
+        // kCGSessionEventTap = 1、kCGHeadInsertEventTap = 0、kCGEventTapOptionListenOnly = 1
+        guard let tap = CGEvent.tapCreate(
+            tap: CGEventTapLocation(rawValue: 1)!,
+            place: CGEventTapPlacement(rawValue: 0)!,
+            options: CGEventTapOptions(rawValue: 1)!,
+            eventsOfInterest: mask,
+            callback: probeTapCallback,
+            userInfo: nil
+        ) else { return }
+        CFMachPortInvalidate(tap)
+    }
+
+    /// 无捕获的 C 回调（tap 不会进 run loop，实际不会被调用）。
+    private static let probeTapCallback: CGEventTapCallBack = { _, _, event, _ in
+        Unmanaged.passUnretained(event)
     }
 
     /// 打开对应系统设置面板（请求弹窗被忽略或授权失效复查后的兜底入口）。
