@@ -10,6 +10,8 @@ struct OverviewView: View {
     let capture: CaptureService
     let screenState: ScreenStateService
     let modeEntry: ModeEntry
+    /// 调试：只验证入口点击，不点场次卡（不开始真人匹配）。
+    @Binding var entryOnly: Bool
     let onEnterMode: () -> Void
     let onPause: () -> Void
     let onEmergencyStop: () -> Void
@@ -171,6 +173,11 @@ struct OverviewView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Toggle("只验证入口点击（不开始真人匹配）", isOn: $entryOnly)
+                .toggleStyle(.checkbox)
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Text("M0-8：主菜单 → 新手场 → 真人匹配 → 棋盘；未知界面/匹配超时会暂停，自动对局待 Session 闭环")
                 .font(.caption)

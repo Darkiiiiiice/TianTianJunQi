@@ -90,7 +90,8 @@ final class ModeEntry {
         capture: CaptureService,
         screenState: ScreenStateService,
         injector: InputInjector,
-        store: AppStateStore
+        store: AppStateStore,
+        entryOnly: Bool = false
     ) async {
         guard !isRunning else { return }
         isRunning = true
@@ -148,6 +149,15 @@ final class ModeEntry {
                         windows: windows, capture: capture, screenState: screenState,
                         injector: injector, store: store
                     )
+                    // 调试模式：只验证入口点击链路，不点场次卡（不开始真人匹配）。
+                    if entryOnly, state == .venue {
+                        store.transition(
+                            to: .paused,
+                            reason: "入口点击已验证，停在场次选择页（未开始匹配）"
+                        )
+                        lastSummary = "入口点击成功 · 未开始匹配 · \(elapsed(started))"
+                        return
+                    }
                 }
 
                 if state == .venue {

@@ -11,6 +11,8 @@ struct MainView: View {
     @State private var injector = InputInjector()
     @State private var modeEntry = ModeEntry()
     @State private var selection: Page = .overview
+    /// 调试开关：只验证入口点击，不点场次卡（不开始真人匹配）。
+    @State private var entryOnly = false
 
     /// 周期复查定时器：授权失效检测（设计文档 §9.6）。
     @State private var permissionTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
@@ -29,6 +31,7 @@ struct MainView: View {
             OverviewView(
                 store: store, permissions: permissions, windows: windows,
                 capture: capture, screenState: screenState, modeEntry: modeEntry,
+                entryOnly: $entryOnly,
                 onEnterMode: { Task { await enterMode() } },
                 onPause: { pause(reason: "用户暂停") },
                 onEmergencyStop: { pause(reason: "用户急停") }
@@ -114,7 +117,8 @@ struct MainView: View {
             capture: capture,
             screenState: screenState,
             injector: injector,
-            store: store
+            store: store,
+            entryOnly: entryOnly
         )
     }
 
