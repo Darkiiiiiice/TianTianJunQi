@@ -8,8 +8,12 @@ struct OverviewView: View {
     let permissions: PermissionStore
     let windows: WindowMonitor
     let capture: CaptureService
+    let screenState: ScreenStateService
+    let onEnterMode: () -> Void
 
     @State private var ciContext = CIContext()
+    /// M0-11：竖屏旋转开关（显示层变换，不影响感知/注入坐标链）。
+    @State private var portraitRotation = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 32) {
@@ -37,7 +41,11 @@ struct OverviewView: View {
             }
             GridRow {
                 Text("主界面").foregroundStyle(.secondary)
-                Text("未识别（M0-6 接入）").foregroundStyle(.secondary)
+                switch screenState.state {
+                case .main: Text("主菜单 · 入口已定位").foregroundStyle(.green)
+                case .board: Text("牌局")
+                case .unknown: Text("未识别（OCR 运行中）").foregroundStyle(.secondary)
+                }
             }
             GridRow {
                 Text("模式 / 对手").foregroundStyle(.secondary)
@@ -81,15 +89,15 @@ struct OverviewView: View {
     private var actionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                Button("进入翻翻棋") {}
+                Button("进入翻翻棋") { onEnterMode() }
+                    .disabled(!permissions.allGranted || windows.effectiveWindowID == nil)
                 Button("自动对局") {}
                 Button("暂停") {}
                 Button("急停", role: .destructive) {}
             }
             .buttonStyle(.bordered)
-            .disabled(true)
 
-            Text("按钮将在 ModeEntry/InputInjector 接入后启用（M0-7/M0-8）")
+            Text("自动对局/暂停/急停在 Session 闭环接入后启用；进入流程为单次点击验证（M0-8 接入步骤引擎）")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -99,7 +107,8 @@ struct OverviewView: View {
     private var liveSection: some View {
         VStack(spacing: 8) {
             Group {
-                if let frame = capture.latestFrame, let image = frameImage(frame) {
+                if let frame = capture.latestFrame,
+                   let image = frameImage(frame, rotated: portraitRotation) {
                     Image(decorative: image, scale: frame.scale, orientation: .up)
                         .resizable()
                         .scaledToFit()
@@ -122,21 +131,32 @@ struct OverviewView: View {
             .frame(width: 240)
             .clipShape(RoundedRectangle(cornerRadius: 12))
 
+            HStack(spacing: 8) {
+                Toggle("竖屏旋转", isOn: $portraitRotation)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .font(.caption)
+                Text(portraitRotation ? "竖屏 · 文字侧躺" : "横版 · 原始画面")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if let error = capture.lastError {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
                     .frame(width: 240)
             } else {
-                Text(capture.isCapturing ? "实时画面 · 15fps（M0-5 观察器）" : "等待游戏窗口…")
+                Text(capture.isCapturing ? "实时画面 · 15fps" : "等待游戏窗口…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
     }
 
-    private func frameImage(_ frame: CapturedFrame) -> CGImage? {
-        let ciImage = CIImage(cvPixelBuffer: frame.pixelBuffer)
+    private func frameImage(_ frame: CapturedFrame, rotated: Bool) -> CGImage? {
+        var ciImage = CIImage(cvPixelBuffer: frame.pixelBuffer)
+        if rotated { ciImage = ciImage.oriented(.right) } // M0-11：仅显示层旋转
         return ciContext.createCGImage(ciImage, from: ciImage.extent)
     }
 }
