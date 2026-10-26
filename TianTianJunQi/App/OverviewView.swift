@@ -30,6 +30,7 @@ struct OverviewView: View {
     @State private var ciContext = CIContext()
     @State private var previewRotation: PreviewRotation = .auto
     @State private var showGrid = false
+    @State private var isExporting = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 24) {
@@ -259,6 +260,24 @@ struct OverviewView: View {
                             ? "请先在设置页完成校准"
                             : "在画面上叠加校准后的 \(boardRows)×\(boardCols) 格点"
                     )
+
+                Divider()
+                    .frame(height: 14)
+
+                Button {
+                    captureSnapshot()
+                } label: {
+                    if isExporting {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("采集样本", systemImage: "camera")
+                            .font(.caption)
+                    }
+                }
+                .controlSize(.mini)
+                .disabled(!canCaptureSnapshot || isExporting)
+                .help("保存当前整帧 + \(boardRows * boardCols) 个透视校正格子到 Application Support")
             }
 
             if let error = capture.lastError {
@@ -292,6 +311,38 @@ struct OverviewView: View {
               let quad = BoardQuad(corners: calibration.boardCorners)
         else { return nil }
         return BoardGrid(quad: quad, rows: boardRows, cols: boardCols)
+    }
+
+    private var canCaptureSnapshot: Bool {
+        calibration.calibration != nil && capture.latestFrame != nil && boardGrid != nil
+    }
+
+    /// 保存当前帧与 60 个格子图，作为 M1-3 分类器的原始样本。
+    private func captureSnapshot() {
+        guard let frame = capture.latestFrame, let grid = boardGrid else {
+            store.note("采集样本失败：请先完成校准并等待游戏画面")
+            return
+        }
+        isExporting = true
+        let windowSize = windows.effectiveCandidate?.bounds.size
+        let theme = calibration.calibration?.theme
+
+        Task {
+            do {
+                let url = try await Task.detached(priority: .utility) {
+                    try BoardSnapshotExporter().export(
+                        frame: frame,
+                        grid: grid,
+                        windowSize: windowSize,
+                        theme: theme
+                    )
+                }.value
+                store.note("棋盘样本已保存：\(url.path)")
+            } catch {
+                store.note("采集样本失败：\(error.localizedDescription)")
+            }
+            isExporting = false
+        }
     }
 
     /// 在显示画面上叠加棋盘四边形、网格线与格心。

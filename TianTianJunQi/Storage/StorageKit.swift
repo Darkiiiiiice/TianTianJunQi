@@ -24,6 +24,8 @@ struct StorageKit {
     var datasetsURL: URL { rootURL.appendingPathComponent("datasets", isDirectory: true) }
     var modelsURL: URL { rootURL.appendingPathComponent("models", isDirectory: true) }
     var perceptionURL: URL { rootURL.appendingPathComponent("perception", isDirectory: true) }
+    /// 棋盘样本：整帧 + 每个格子的透视图 + meta.json（M1-3/M2-7）。
+    var samplesURL: URL { perceptionURL.appendingPathComponent("samples", isDirectory: true) }
     var simURL: URL { rootURL.appendingPathComponent("sim", isDirectory: true) }
     var logsURL: URL { rootURL.appendingPathComponent("logs", isDirectory: true) }
 
