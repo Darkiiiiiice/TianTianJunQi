@@ -213,7 +213,15 @@ struct BoardSnapshotExporter {
                 y: CGFloat(size) / extent.height
             )
         )
-        return ciContext.createCGImage(scaled, from: scaled.extent)
+        // CI 的 extent 常带浮点误差（例如 128.00000000000003），
+        // createCGImage 会向上取整成 129px；显式裁到整数尺寸保证训练输入一致。
+        let target = CGRect(
+            x: scaled.extent.minX,
+            y: scaled.extent.minY,
+            width: CGFloat(size),
+            height: CGFloat(size)
+        )
+        return ciContext.createCGImage(scaled, from: target)
     }
 
     private static func writePNG(_ image: CIImage, to url: URL) throws {

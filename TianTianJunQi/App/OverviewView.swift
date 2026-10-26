@@ -31,6 +31,7 @@ struct OverviewView: View {
     @State private var previewRotation: PreviewRotation = .auto
     @State private var showGrid = false
     @State private var isExporting = false
+    @State private var showSnapshots = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 24) {
@@ -46,6 +47,9 @@ struct OverviewView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding()
+        .sheet(isPresented: $showSnapshots) {
+            SnapshotBrowserView(rootURL: StorageKit().samplesURL)
+        }
     }
 
     private var statusSection: some View {
@@ -265,6 +269,15 @@ struct OverviewView: View {
                     .frame(height: 14)
 
                 Button {
+                    showSnapshots = true
+                } label: {
+                    Label("样本库", systemImage: "square.grid.3x3")
+                        .font(.caption)
+                }
+                .controlSize(.mini)
+                .help("浏览已采集的棋盘快照，并逐格标注空/暗子/明子")
+
+                Button {
                     captureSnapshot()
                 } label: {
                     if isExporting {
@@ -338,6 +351,7 @@ struct OverviewView: View {
                     )
                 }.value
                 store.note("棋盘样本已保存：\(url.path)")
+                showSnapshots = true
             } catch {
                 store.note("采集样本失败：\(error.localizedDescription)")
             }

@@ -5,7 +5,7 @@ APP_PROJECT := TianTianJunQi.xcodeproj
 
 .DEFAULT_GOAL := help
 
-.PHONY: bootstrap record train export eval play test clean help
+.PHONY: bootstrap record train export eval play test test-python test-swift clean help
 
 bootstrap: ## 初始化环境：uv sync + 校验 Xcode 工程
 	cd $(TRAINER) && uv sync
@@ -26,8 +26,13 @@ eval: ## 模拟器/离线评测（占位；M3 实现）
 play: ## 打开 Swift 客户端
 	open $(APP_PROJECT)
 
-test: ## Python 单测（Swift 单测待测试 target 建立后接入）
+test: test-python test-swift ## 全部单测（Python + Swift 感知内核）
+
+test-python: ## Python 单测
 	cd $(TRAINER) && uv run pytest -q
+
+test-swift: ## Swift 感知内核单测（BoardGeometry / BoardStabilizer）
+	./scripts/run-swift-tests.sh
 
 clean: ## 清理 Python 缓存
 	find . -name '__pycache__' -type d -prune -exec rm -rf {} +

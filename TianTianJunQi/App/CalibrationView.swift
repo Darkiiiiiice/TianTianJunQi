@@ -180,6 +180,22 @@ struct CalibrationView: View {
                                 .controlSize(.small)
                         }
                     }
+
+                    if let grid = draftGrid {
+                        Text("已生成 \(grid.rows)×\(grid.cols) 格点 · 宽高比 \(String(format: "%.2f", grid.quad.aspectRatio))")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                    if let warning = cornerWarning {
+                        Text(warning)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("绿色四边形内会实时叠加格点；请确认每个格心都落在棋子/空格中心。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let calibration = store.calibration {
@@ -282,6 +298,9 @@ struct CalibrationView: View {
                     if draft.corners.count == 4 { path.closeSubpath() }
                     context.stroke(path, with: .color(.green), lineWidth: 2)
                 }
+                if let grid = draftGrid {
+                    drawGrid(grid, in: context, size: canvasSize)
+                }
                 for (index, corner) in draft.corners.enumerated() {
                     let point = local(corner, in: canvasSize)
                     let circle = Path(ellipseIn: CGRect(
@@ -352,6 +371,32 @@ struct CalibrationView: View {
             at: CGPoint(x: background.minX + 5, y: background.midY),
             anchor: .leading
         )
+    }
+
+    /// 四角已选满时，在预览上叠加 5×12 网格与格心，点选后立刻能看出是否贴合。
+    private func drawGrid(_ grid: BoardGrid, in context: GraphicsContext, size: CGSize) {
+        for row in 0...grid.rows {
+            let v = CGFloat(row) / CGFloat(grid.rows)
+            var line = Path()
+            line.move(to: local(grid.point(u: 0, v: v), in: size))
+            line.addLine(to: local(grid.point(u: 1, v: v), in: size))
+            context.stroke(line, with: .color(.white.opacity(0.55)), lineWidth: 1)
+        }
+        for col in 0...grid.cols {
+            let u = CGFloat(col) / CGFloat(grid.cols)
+            var line = Path()
+            line.move(to: local(grid.point(u: u, v: 0), in: size))
+            line.addLine(to: local(grid.point(u: u, v: 1), in: size))
+            context.stroke(line, with: .color(.white.opacity(0.55)), lineWidth: 1)
+        }
+
+        for center in grid.cellCenters {
+            let point = local(center, in: size)
+            let dot = Path(ellipseIn: CGRect(
+                x: point.x - 1.8, y: point.y - 1.8, width: 3.6, height: 3.6
+            ))
+            context.fill(dot, with: .color(.yellow.opacity(0.9)))
+        }
     }
 
     // MARK: - Interaction
@@ -466,7 +511,7 @@ struct CalibrationView: View {
         case .canvas:
             draft.canvasROI.width > 0.05 && draft.canvasROI.height > 0.05
         case .corners:
-            draft.corners.count == 4
+            draftGrid != nil
         case .entry:
             draft.modeEntry != nil
         case .venue:
@@ -523,7 +568,7 @@ struct CalibrationView: View {
     private func save() {
         guard let modeEntry = draft.modeEntry,
               let venue = draft.venue,
-              draft.corners.count == 4
+              draftGrid != nil
         else {
             errorMessage = "还有未完成的校准项"
             return
@@ -549,6 +594,26 @@ struct CalibrationView: View {
     }
 
     // MARK: - Geometry
+
+    /// 当前四角对应的格点；不足 4 角或几何无效时为 nil。
+    private var draftGrid: BoardGrid? {
+        guard draft.corners.count == 4,
+              let quad = BoardQuad(corners: draft.corners)
+        else { return nil }
+        return BoardGrid(quad: quad, rows: profile.board.rows, cols: profile.board.cols)
+    }
+
+    /// 四角宽高比与 12:5 偏差过大时给出提醒（只提醒、不阻止保存）。
+    private var cornerWarning: String? {
+        guard draft.corners.count == 4 else { return nil }
+        guard let quad = BoardQuad(corners: draft.corners), quad.isValid else {
+            return "四角顺序无效：请按 左上 → 右上 → 右下 → 左下 重新点选"
+        }
+        let target = CGFloat(profile.board.cols) / CGFloat(profile.board.rows)
+        let error = abs(quad.aspectRatio - target) / target
+        guard error > 0.25 else { return nil }
+        return "宽高比 \(String(format: "%.2f", quad.aspectRatio)) 与 \(profile.board.cols):\(profile.board.rows)（\(String(format: "%.2f", target))）偏差较大，可能点错了角"
+    }
 
     private func previewImage(_ frame: CapturedFrame) -> CGImage? {
         var image = CIImage(cvPixelBuffer: frame.pixelBuffer)
