@@ -17,6 +17,7 @@ struct CalibrationView: View {
     @State private var dragCurrent: CGPoint?
     @State private var errorMessage: String?
     @State private var ciContext = CIContext()
+    @State private var isDetecting = false
 
     private let profile: GameProfile
 
@@ -169,6 +170,15 @@ struct CalibrationView: View {
                         }
                         .controlSize(.small)
                         .disabled(draft.corners.isEmpty)
+                    }
+                    HStack(spacing: 8) {
+                        Button("自动检测四角") { detectCorners() }
+                            .controlSize(.small)
+                            .disabled(capture.latestFrame == nil || isDetecting)
+                        if isDetecting {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
                     }
                 }
 
@@ -480,6 +490,33 @@ struct CalibrationView: View {
             step = next
         } else {
             save()
+        }
+    }
+
+    /// Vision 自动检测四角；失败时保留手动点选能力。
+    private func detectCorners() {
+        guard let frame = capture.latestFrame else {
+            errorMessage = "没有可用画面，无法自动检测"
+            return
+        }
+        isDetecting = true
+        errorMessage = nil
+
+        Task {
+            let quad = await Task.detached(priority: .userInitiated) {
+                BoardDetector.detect(
+                    in: frame,
+                    rows: profile.board.rows,
+                    cols: profile.board.cols
+                )
+            }.value
+
+            isDetecting = false
+            if let quad {
+                draft.corners = quad.corners
+            } else {
+                errorMessage = "未自动检测到棋盘；请手动点选四个角"
+            }
         }
     }
 

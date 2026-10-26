@@ -11,6 +11,7 @@ struct MainView: View {
     @State private var injector = InputInjector()
     @State private var modeEntry = ModeEntry()
     @State private var calibration = CalibrationStore()
+    @State private var gameProfile = GameProfile.tianTianJunQi
     @State private var selection: Page = .overview
     /// 调试开关：只验证入口点击，不点场次卡（不开始真人匹配）。
     @State private var entryOnly = false
@@ -32,6 +33,9 @@ struct MainView: View {
             OverviewView(
                 store: store, permissions: permissions, windows: windows,
                 capture: capture, screenState: screenState, modeEntry: modeEntry,
+                calibration: calibration,
+                boardRows: gameProfile.board.rows,
+                boardCols: gameProfile.board.cols,
                 entryOnly: $entryOnly,
                 onEnterMode: { Task { await enterMode() } },
                 onPause: { pause(reason: "用户暂停") },
@@ -92,7 +96,7 @@ struct MainView: View {
         do {
             let storage = StorageKit()
             try storage.ensureLayout()
-            _ = try storage.loadOrCreateGameProfile()
+            gameProfile = try storage.loadOrCreateGameProfile()
             store.note("存储目录就绪：\(storage.rootURL.path)")
         } catch {
             store.note("存储初始化失败：\(error.localizedDescription)")

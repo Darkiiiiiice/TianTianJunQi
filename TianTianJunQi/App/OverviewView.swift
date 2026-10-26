@@ -10,6 +10,9 @@ struct OverviewView: View {
     let capture: CaptureService
     let screenState: ScreenStateService
     let modeEntry: ModeEntry
+    let calibration: CalibrationStore
+    let boardRows: Int
+    let boardCols: Int
     /// 调试：只验证入口点击，不点场次卡（不开始真人匹配）。
     @Binding var entryOnly: Bool
     let onEnterMode: () -> Void
@@ -26,6 +29,7 @@ struct OverviewView: View {
 
     @State private var ciContext = CIContext()
     @State private var previewRotation: PreviewRotation = .auto
+    @State private var showGrid = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 24) {
@@ -193,14 +197,21 @@ struct OverviewView: View {
                 ZStack {
                     if let frame = capture.latestFrame,
                        let image = frameImage(frame, rotated: shouldRotate(frame)) {
+                        let rotated = shouldRotate(frame)
                         let size = fittedSize(
-                            aspect: displayAspect(frame, rotated: shouldRotate(frame)),
+                            aspect: displayAspect(frame, rotated: rotated),
                             available: geo.size
                         )
-                        Image(decorative: image, scale: frame.scale, orientation: .up)
-                            .resizable()
-                            .frame(width: size.width, height: size.height)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        ZStack {
+                            Image(decorative: image, scale: frame.scale, orientation: .up)
+                                .resizable()
+                                .frame(width: size.width, height: size.height)
+                            if showGrid, let grid = boardGrid {
+                                gridOverlay(grid, size: size, rotated: rotated)
+                            }
+                        }
+                        .frame(width: size.width, height: size.height)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     } else {
                         RoundedRectangle(cornerRadius: 12)
                             .fill(.quaternary)
@@ -235,6 +246,19 @@ struct OverviewView: View {
                 Text(rotationLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Divider()
+                    .frame(height: 14)
+
+                Toggle("显示棋盘格点", isOn: $showGrid)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                    .disabled(calibration.calibration == nil)
+                    .help(
+                        calibration.calibration == nil
+                            ? "请先在设置页完成校准"
+                            : "在画面上叠加校准后的 \(boardRows)×\(boardCols) 格点"
+                    )
             }
 
             if let error = capture.lastError {
@@ -260,6 +284,64 @@ struct OverviewView: View {
         let rate = capture.isCapturing ? "15fps" : "已暂停"
         return "实时画面 · \(contentWidth)×\(contentHeight)"
             + "（裁自 \(width)×\(height)）· \(rate)"
+    }
+
+    /// 当前校准四角对应的 5×12 棋盘格点。
+    private var boardGrid: BoardGrid? {
+        guard let calibration = calibration.calibration,
+              let quad = BoardQuad(corners: calibration.boardCorners)
+        else { return nil }
+        return BoardGrid(quad: quad, rows: boardRows, cols: boardCols)
+    }
+
+    /// 在显示画面上叠加棋盘四边形、网格线与格心。
+    /// 预览可能做了 90° 显示旋转，这里同步变换坐标（仅显示层）。
+    private func gridOverlay(_ grid: BoardGrid, size: CGSize, rotated: Bool) -> some View {
+        Canvas { context, canvasSize in
+            func displayPoint(_ point: CGPoint) -> CGPoint {
+                let mapped = rotated
+                    ? CGPoint(x: 1 - point.y, y: point.x)
+                    : point
+                return CGPoint(
+                    x: mapped.x * canvasSize.width,
+                    y: mapped.y * canvasSize.height
+                )
+            }
+
+            var outline = Path()
+            outline.addLines(grid.quad.corners.map(displayPoint))
+            outline.closeSubpath()
+            context.stroke(
+                outline,
+                with: .color(.green.opacity(0.95)),
+                style: StrokeStyle(lineWidth: 2, dash: [7, 4])
+            )
+
+            for row in 0...grid.rows {
+                let v = CGFloat(row) / CGFloat(grid.rows)
+                var line = Path()
+                line.move(to: displayPoint(grid.point(u: 0, v: v)))
+                line.addLine(to: displayPoint(grid.point(u: 1, v: v)))
+                context.stroke(line, with: .color(.green.opacity(0.45)), lineWidth: 1)
+            }
+            for col in 0...grid.cols {
+                let u = CGFloat(col) / CGFloat(grid.cols)
+                var line = Path()
+                line.move(to: displayPoint(grid.point(u: u, v: 0)))
+                line.addLine(to: displayPoint(grid.point(u: u, v: 1)))
+                context.stroke(line, with: .color(.green.opacity(0.45)), lineWidth: 1)
+            }
+
+            for center in grid.cellCenters {
+                let point = displayPoint(center)
+                let dot = Path(ellipseIn: CGRect(
+                    x: point.x - 1.6, y: point.y - 1.6, width: 3.2, height: 3.2
+                ))
+                context.fill(dot, with: .color(.yellow))
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .allowsHitTesting(false)
     }
 
     /// 显示后的宽高比（旋转时宽高互换），按裁剪后的内容区计算。
