@@ -63,6 +63,11 @@ struct StorageKit {
         try save(calibration, to: calibrationURL)
     }
 
+    func deleteCalibration() throws {
+        guard FileManager.default.fileExists(atPath: calibrationURL.path) else { return }
+        try FileManager.default.removeItem(at: calibrationURL)
+    }
+
     // MARK: JSON 读写
 
     private func load<T: Decodable>(_ type: T.Type, from url: URL) throws -> T? {
@@ -145,15 +150,18 @@ struct OpponentSpec: Codable, Equatable, Sendable {
 // MARK: - calibration.json
 
 /// 校准数据（设计文档 §5 Calibration）：只存本机，不入库。
+/// 所有锚点都是归一化坐标（0..1，左上原点），相对抓帧裁剪后的窗口内容区，
+/// 与 OCR/点击共用同一坐标系。
 struct Calibration: Codable, Equatable, Sendable {
+    /// 校准时窗口的 point 尺寸；仅用于提示比例变化，不参与坐标换算。
     var windowSize: CGSize
-    /// 归一化 0..1，相对整窗。
+    /// 游戏画布区域。
     var canvasROI: CGRect
-    /// 棋盘四角，归一化。
+    /// 棋盘四角（左上 → 右上 → 右下 → 左下）。
     var boardCorners: [CGPoint]
     /// “翻翻棋”入口。
     var modeEntry: CGRect
-    /// 开始/再来一局/关闭等按钮。
+    /// 开始/再来一局/关闭/场次等按钮锚点。
     var buttons: [String: CGRect]
     var templates: [String: URL]
     /// 与 `GameProfile.board.theme` 不一致时要求重新校准。

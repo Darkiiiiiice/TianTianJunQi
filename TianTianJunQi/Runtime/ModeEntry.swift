@@ -93,6 +93,7 @@ final class ModeEntry {
         screenState: ScreenStateService,
         injector: InputInjector,
         store: AppStateStore,
+        calibration: Calibration? = nil,
         entryOnly: Bool = false
     ) async {
         guard !isRunning else { return }
@@ -101,8 +102,17 @@ final class ModeEntry {
         currentStep = nil
         lastSummary = nil
 
+        let entryFallback = calibration?.modeEntry ?? Self.entryFallback
+        let venueFallback = calibration?.buttons["venue"] ?? Self.venueFallback
+
         let started = Date()
         store.transition(to: .enteringMode, reason: "开始进入翻翻棋")
+        if let calibration {
+            store.note(
+                "校准锚点已加载 · 入口 \(percent(calibration.modeEntry))"
+                    + " · 场次 \(percent(calibration.buttons["venue"] ?? Self.venueFallback))"
+            )
+        }
         defer {
             isRunning = false
             currentStep = nil
@@ -145,7 +155,7 @@ final class ModeEntry {
                 if state == .main {
                     state = try await clickAndWait(
                         keyword: ScreenStateService.mainKeyword,
-                        fallback: Self.entryFallback,
+                        fallback: entryFallback,
                         targets: [.venue, .board],
                         retries: 2, timeout: 5, step: "点击翻翻棋入口",
                         windows: windows, capture: capture, screenState: screenState,
@@ -165,7 +175,7 @@ final class ModeEntry {
                 if state == .venue {
                     state = try await clickAndWait(
                         keyword: ScreenStateService.venueKeyword,
-                        fallback: Self.venueFallback,
+                        fallback: venueFallback,
                         targets: [.matching, .board],
                         retries: 2, timeout: 5, step: "选择新手场",
                         windows: windows, capture: capture, screenState: screenState,
@@ -507,5 +517,10 @@ final class ModeEntry {
 
     private func elapsed(_ start: Date) -> String {
         String(format: "%.1fs", Date().timeIntervalSince(start))
+    }
+
+    private func percent(_ rect: CGRect) -> String {
+        "\(Int(rect.minX * 100)),\(Int(rect.minY * 100)) "
+            + "\(Int(rect.width * 100))×\(Int(rect.height * 100))%"
     }
 }

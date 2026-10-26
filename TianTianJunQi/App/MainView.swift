@@ -10,6 +10,7 @@ struct MainView: View {
     @State private var screenState = ScreenStateService()
     @State private var injector = InputInjector()
     @State private var modeEntry = ModeEntry()
+    @State private var calibration = CalibrationStore()
     @State private var selection: Page = .overview
     /// 调试开关：只验证入口点击，不点场次卡（不开始真人匹配）。
     @State private var entryOnly = false
@@ -47,9 +48,14 @@ struct MainView: View {
                 .tabItem { Label("日志", systemImage: "list.bullet.rectangle") }
                 .tag(Page.logs)
 
-            SettingsView(permissions: permissions)
-                .tabItem { Label("设置", systemImage: "gearshape") }
-                .tag(Page.settings)
+            SettingsView(
+                permissions: permissions,
+                calibration: calibration,
+                windows: windows,
+                capture: capture
+            )
+            .tabItem { Label("设置", systemImage: "gearshape") }
+            .tag(Page.settings)
         }
         .onAppear {
             permissions.refresh()
@@ -131,6 +137,7 @@ struct MainView: View {
             screenState: screenState,
             injector: injector,
             store: store,
+            calibration: calibration.calibration,
             entryOnly: entryOnly
         )
     }
