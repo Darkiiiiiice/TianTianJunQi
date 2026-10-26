@@ -5,7 +5,7 @@ APP_PROJECT := TianTianJunQi.xcodeproj
 
 .DEFAULT_GOAL := help
 
-.PHONY: bootstrap record train export eval play test test-python test-swift clean help
+.PHONY: bootstrap record train export eval play dataset test test-python test-swift clean help
 
 bootstrap: ## 初始化环境：uv sync + 校验 Xcode 工程
 	cd $(TRAINER) && uv sync
@@ -22,6 +22,9 @@ export: ## 导出模型（占位；M3 实现：safetensors + model.json + manife
 
 eval: ## 模拟器/离线评测（占位；M3 实现）
 	cd $(TRAINER) && uv run wgai eval
+
+dataset: ## 从样本库 labels.json 导出 Create ML 分层数据集（M1-3）
+	cd $(TRAINER) && uv run wgai dataset
 
 play: ## 打开 Swift 客户端
 	open $(APP_PROJECT)
