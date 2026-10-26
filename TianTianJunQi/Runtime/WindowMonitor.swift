@@ -32,6 +32,61 @@ struct GameWindowCandidate: Identifiable, Equatable, Sendable {
     let bounds: CGRect
 }
 
+/// 窗口几何查询（点击链共用）。
+/// 窗口可被用户随时移动/缩放，绝对屏幕坐标不能缓存：每次点击都按窗口 ID
+/// 重新读取 CGWindowList bounds，再用归一化偏移量换算成全局点。
+enum WindowGeometry {
+    /// 目标窗口此刻的全局 bounds（左上原点 point）。
+    static func frame(of windowID: CGWindowID) -> CGRect? {
+        guard let raw = CGWindowListCopyWindowInfo(
+            [.optionAll, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else { return nil }
+
+        for info in raw {
+            guard let id = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                  id == windowID,
+                  let dict = info[kCGWindowBounds as String] as? [String: NSNumber],
+                  let width = dict["Width"]?.doubleValue,
+                  let height = dict["Height"]?.doubleValue,
+                  width > 0, height > 0
+            else { continue }
+            return CGRect(
+                x: dict["X"]?.doubleValue ?? 0,
+                y: dict["Y"]?.doubleValue ?? 0,
+                width: width,
+                height: height
+            )
+        }
+        return nil
+    }
+
+    /// 目标点最上面的 layer-0 窗口（CGWindowList 顺序即前到后）。
+    static func topWindow(at point: CGPoint) -> (id: CGWindowID, owner: String)? {
+        let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] ?? []
+
+        for info in list {
+            guard let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue,
+                  layer == 0,
+                  let bounds = info[kCGWindowBounds as String] as? [String: NSNumber],
+                  let id = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value
+            else { continue }
+
+            let rect = CGRect(
+                x: bounds["X"]?.doubleValue ?? 0,
+                y: bounds["Y"]?.doubleValue ?? 0,
+                width: bounds["Width"]?.doubleValue ?? 0,
+                height: bounds["Height"]?.doubleValue ?? 0
+            )
+            if rect.contains(point) {
+                return (id, info[kCGWindowOwnerName as String] as? String ?? "未知窗口")
+            }
+        }
+        return nil
+    }
+}
+
 /// 游戏窗口监测：枚举候选 + 微信运行状态。
 /// 多窗口策略（逐个截图分类后让用户选择）在 M0-6 屏幕分类接入后完善；
 /// 当前优先标题命中，其次 WeChatAppEx 自有窗口，允许在 UI 上手动指定。

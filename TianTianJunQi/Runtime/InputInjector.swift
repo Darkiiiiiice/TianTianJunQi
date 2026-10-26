@@ -7,6 +7,7 @@ enum InputError: LocalizedError {
     case userActive
     case targetOffScreen(CGPoint)
     case windowNotRaised(String)
+    case windowMissing(CGWindowID)
     case accessibilityUnavailable
 
     var errorDescription: String? {
@@ -19,6 +20,8 @@ enum InputError: LocalizedError {
             "点击目标在屏幕外 \(Int(point.x)), \(Int(point.y))；请把游戏窗口移回屏幕内"
         case .windowNotRaised(let owner):
             "游戏窗口未能在最前（当前最前：\(owner)），已暂停；请手动点一下游戏窗口后重试"
+        case .windowMissing(let id):
+            "游戏窗口已关闭或无法读取坐标（id: \(id)），已暂停"
         case .accessibilityUnavailable:
             "辅助功能权限未生效，请重新授权并重启客户端"
         }
@@ -48,6 +51,10 @@ struct ClickReport: Sendable {
 /// 实测结论（2026-10-23）：`CGEvent.postToPid` 不移动系统指针，但微信小游戏窗口
 /// （主进程与 WeChatAppEx 渲染进程）均忽略定向事件。公开 API 下唯一可靠的注入是
 /// 全局 HID 点击；因此默认采用“保存指针 → 点击 → 立即还原”，把指针占用压到 ~150ms。
+///
+/// 坐标策略：窗口可被用户随时移动/缩放，所以绝对屏幕坐标绝不缓存。
+/// 每次点击都在“等完用户空闲、投递事件之前”按窗口 ID 重读 bounds，
+/// 再把归一化偏移量换算成全局点（见 `click`）。
 actor InputInjector {
     /// 点击后还原系统指针。默认开启。
     var preserveCursor = true
@@ -57,27 +64,40 @@ actor InputInjector {
     var useProcessDelivery = false
 
     /// 点击窗口内归一化坐标（左上原点 0..1）。
+    /// 绝对点在此刻用最新窗口 bounds 计算，而不是使用调用方缓存的值：
+    /// 抬窗、等用户空闲期间窗口都可能被移动，早算会整体偏移。
     /// - Parameters:
-    ///   - point: 归一化点击点
-    ///   - windowBounds: 目标窗口的 CGWindowList 全局 bounds（point）
-    ///   - windowID: 目标窗口 ID（用于事件字段）
+    ///   - point: 归一化点击点（相对窗口）
+    ///   - windowID: 目标窗口 ID（用于读取最新 bounds 与事件字段）
     ///   - pid: 目标进程 PID（仅 process 投递使用）
     func click(
         normalized point: CGPoint,
-        in windowBounds: CGRect,
         windowID: CGWindowID,
         pid: pid_t
     ) async throws -> ClickReport {
+        if respectUserInput {
+            try await waitForUserIdle()
+        }
+
+        // 关键：等完用户操作后立刻重读窗口，用“当前 bounds + 归一化偏移”落点。
+        guard let windowBounds = WindowGeometry.frame(of: windowID) else {
+            throw InputError.windowMissing(windowID)
+        }
         let global = CGPoint(
             x: windowBounds.minX + point.x * windowBounds.width,
             y: windowBounds.minY + point.y * windowBounds.height
         )
 
-        if respectUserInput {
-            try await waitForUserIdle()
-        }
         guard Self.isOnScreen(global) else {
             throw InputError.targetOffScreen(global)
+        }
+
+        let delivery: ClickDelivery = useProcessDelivery ? .process : .global
+        // 全局点击会命中目标点最上面的窗口；落点前最后复核一次，防止窗口刚被遮挡。
+        if delivery == .global,
+           let top = WindowGeometry.topWindow(at: global),
+           top.id != windowID {
+            throw InputError.windowNotRaised(top.owner)
         }
 
         // 轻微随机抖动与按下间隔，避免机械固定节奏（§9.8；是拟人化而非反检测手段）
@@ -86,7 +106,6 @@ actor InputInjector {
             y: global.y + Double.random(in: -2...2)
         )
 
-        let delivery: ClickDelivery = useProcessDelivery ? .process : .global
         let source = CGEventSource(stateID: .hidSystemState)
         let before = CGEvent(source: nil)?.location ?? .zero
 

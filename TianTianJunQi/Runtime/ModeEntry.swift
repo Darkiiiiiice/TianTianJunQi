@@ -62,6 +62,8 @@ enum ModeEntryError: LocalizedError {
 /// - 全局点击要求目标窗口在最前，点击前 AX raise 并校验目标点最前窗口；
 /// - 目标点出屏时用 AX 把窗口移回可见区域；
 /// - 微信小游戏忽略 postToPid，注入使用全局点击 + 立即还原指针。
+/// - 落点最终由 InputInjector 在投递前一刻按窗口 ID 重读 bounds 计算，
+///   抬窗/等待期间窗口再次移动也不会点偏。
 @MainActor
 @Observable
 final class ModeEntry {
@@ -256,19 +258,34 @@ final class ModeEntry {
             try await Task.sleep(for: .milliseconds(250))
 
             let rect = screenState.locate(keyword) ?? fallback
-            let point = CGPoint(
-                x: window.bounds.minX + rect.midX * window.bounds.width,
-                y: window.bounds.minY + rect.midY * window.bounds.height
-            )
+            // 抬窗与等待期间窗口仍可能被移动：校验和落点都用最新 bounds，
+            // 不能沿用上面 freshWindow 读到的旧坐标。
+            func absolutePoint(in bounds: CGRect) -> CGPoint {
+                CGPoint(
+                    x: bounds.minX + rect.midX * bounds.width,
+                    y: bounds.minY + rect.midY * bounds.height
+                )
+            }
+            guard let bounds = WindowGeometry.frame(of: window.id) else {
+                throw ModeEntryError.noWindow
+            }
+            var point = absolutePoint(in: bounds)
             guard InputInjector.isOnScreen(point) else {
-                throw ModeEntryError.targetOffScreen(point, window.bounds)
+                throw ModeEntryError.targetOffScreen(point, bounds)
             }
 
             // 全局点击会命中“目标点最上面的窗口”；若游戏被盖住，先 raise 再复核。
-            if let top = topWindow(at: point), top.id != window.id {
+            if let top = WindowGeometry.topWindow(at: point), top.id != window.id {
                 raiseWindow(window)
                 try await Task.sleep(for: .milliseconds(250))
-                if let again = topWindow(at: point), again.id != window.id {
+                guard let raised = WindowGeometry.frame(of: window.id) else {
+                    throw ModeEntryError.noWindow
+                }
+                point = absolutePoint(in: raised)
+                guard InputInjector.isOnScreen(point) else {
+                    throw ModeEntryError.targetOffScreen(point, raised)
+                }
+                if let again = WindowGeometry.topWindow(at: point), again.id != window.id {
                     throw ModeEntryError.windowCovered(again.owner)
                 }
             }
@@ -276,14 +293,13 @@ final class ModeEntry {
             currentStep = "\(step)（第 \(attempt + 1) 次）"
             let report = try await injector.click(
                 normalized: CGPoint(x: rect.midX, y: rect.midY),
-                in: window.bounds,
                 windowID: window.id,
                 pid: window.ownerPID
             )
             store.note(
                 "步骤「\(step)」第 \(attempt + 1) 次点击 \(keyword) · "
-                    + "窗口 \(Int(window.bounds.minX)),\(Int(window.bounds.minY)) "
-                    + "\(Int(window.bounds.width))×\(Int(window.bounds.height)) · "
+                    + "窗口 \(Int(report.windowBounds.minX)),\(Int(report.windowBounds.minY)) "
+                    + "\(Int(report.windowBounds.width))×\(Int(report.windowBounds.height)) · "
                     + "目标 \(Int(report.point.x)),\(Int(report.point.y)) · "
                     + (report.delivery == .process ? "后台事件" : "全局点击")
                     + (report.cursorRestored ? "（指针已还原）" : "")
@@ -421,32 +437,6 @@ final class ModeEntry {
             }
             .max(by: { $0.1 < $1.1 })?
             .0
-    }
-
-    /// 目标点最上面的 layer-0 窗口（CGWindowList 顺序即前到后）。
-    private func topWindow(at point: CGPoint) -> (id: CGWindowID, owner: String)? {
-        let list = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
-        ) as? [[String: Any]] ?? []
-
-        for info in list {
-            guard let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue,
-                  layer == 0,
-                  let bounds = info[kCGWindowBounds as String] as? [String: NSNumber],
-                  let id = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value
-            else { continue }
-
-            let rect = CGRect(
-                x: bounds["X"]!.doubleValue,
-                y: bounds["Y"]!.doubleValue,
-                width: bounds["Width"]!.doubleValue,
-                height: bounds["Height"]!.doubleValue
-            )
-            if rect.contains(point) {
-                return (id, info[kCGWindowOwnerName as String] as? String ?? "未知窗口")
-            }
-        }
-        return nil
     }
 
     /// 通过 AX 找到目标窗口：优先标题，其次位置/尺寸（标题为空时）。
