@@ -56,6 +56,7 @@ struct MainView: View {
             windows.refresh()
             syncCapture()
             updateRuntimeState()
+            initStorage()
         }
         .onReceive(permissionTimer) { _ in
             permissions.refresh()
@@ -77,6 +78,18 @@ struct MainView: View {
             NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
         ) { _ in
             permissions.refresh()
+        }
+    }
+
+    /// M0-10：启动即建 Application Support 目录布局，并确保 `game-profile.json` 存在。
+    private func initStorage() {
+        do {
+            let storage = StorageKit()
+            try storage.ensureLayout()
+            _ = try storage.loadOrCreateGameProfile()
+            store.note("存储目录就绪：\(storage.rootURL.path)")
+        } catch {
+            store.note("存储初始化失败：\(error.localizedDescription)")
         }
     }
 

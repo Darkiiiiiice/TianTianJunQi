@@ -6,6 +6,12 @@
 	objectVersion = 90;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		000000000000000000000311 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000301 /* MLX */; };
+		000000000000000000000312 /* MLXNN in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000302 /* MLXNN */; };
+		000000000000000000000313 /* MLXRandom in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000303 /* MLXRandom */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		000000000000000000000120 /* TianTianJunQi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TianTianJunQi.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -22,6 +28,9 @@
 		000000000000000130000000 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				000000000000000000000311 /* MLX in Frameworks */,
+				000000000000000000000312 /* MLXNN in Frameworks */,
+				000000000000000000000313 /* MLXRandom in Frameworks */,
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -60,6 +69,11 @@
 				000000000000000000000010 /* TianTianJunQi */,
 			);
 			name = TianTianJunQi;
+			packageProductDependencies = (
+				000000000000000000000301 /* MLX */,
+				000000000000000000000302 /* MLXNN */,
+				000000000000000000000303 /* MLXRandom */,
+			);
 			productName = MyApp;
 			productReference = 000000000000000000000120 /* TianTianJunQi.app */;
 			productType = "com.apple.product-type.application";
@@ -88,6 +102,9 @@
 			);
 			mainGroup = 000000000000000000000001;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				000000000000000000000300 /* XCRemoteSwiftPackageReference "mlx-swift" */,
+			);
 			preferredProjectObjectVersion = 90;
 			productRefGroup = 000000000000000000000020 /* Products */;
 			projectDirPath = "";
@@ -343,6 +360,35 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		000000000000000000000300 /* XCRemoteSwiftPackageReference "mlx-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift";
+			requirement = {
+				kind = exactVersion;
+				version = 0.32.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		000000000000000000000301 /* MLX */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 000000000000000000000300 /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLX;
+		};
+		000000000000000000000302 /* MLXNN */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 000000000000000000000300 /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXNN;
+		};
+		000000000000000000000303 /* MLXRandom */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 000000000000000000000300 /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXRandom;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 000000000000000000000000 /* Project object */;
 }

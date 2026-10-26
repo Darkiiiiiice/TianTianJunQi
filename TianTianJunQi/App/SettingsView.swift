@@ -1,9 +1,12 @@
+import AppKit
 import SwiftUI
 
 /// 设置页：权限 / 校准 / 棋盘配置 / 对手模式 / 模型路径。
 /// 权限区为实时状态（M0-3）；校准 M1-1 接入向导；对手与棋盘随 P0 回填。
 struct SettingsView: View {
     let permissions: PermissionStore
+
+    private let storage = StorageKit()
 
     var body: some View {
         Form {
@@ -30,10 +33,28 @@ struct SettingsView: View {
             }
             Section("模型") {
                 LabeledContent("当前模型", value: "无（M3-4 接入加载）")
-                LabeledContent("模型目录", value: "~/Library/Application Support/TianTianJunqiAI/models")
+                LabeledContent("模型目录", value: displayPath(storage.modelsURL))
+            }
+            Section {
+                LabeledContent("存储目录", value: displayPath(storage.rootURL))
+                LabeledContent("游戏配置", value: "game-profile.json")
+                LabeledContent("校准文件", value: "calibration.json（未校准，M1-1 接入向导）")
+                Button("打开存储目录") {
+                    NSWorkspace.shared.open(storage.rootURL)
+                }
+            } header: {
+                Text("存储")
+            } footer: {
+                Text("episode、数据集、模型、日志全部放 Application Support（设计文档 §5），不进 App Bundle；校准文件只存本机，不入库。")
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// 展示用路径：用户目录缩写为 `~`。
+    private func displayPath(_ url: URL) -> String {
+        url.path.replacingOccurrences(
+            of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
     }
 
     private func permissionRow(_ kind: PermissionKind) -> some View {
