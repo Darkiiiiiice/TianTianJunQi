@@ -1973,6 +1973,21 @@ func testEpisodeRecorder() {
         check(false, "EpisodeRecorder 翻牌录制失败：\(error)")
     }
 
+    // 结算页清空感知时，用动作后的状态兜底终局。
+    let fallbackRecorder = EpisodeRecorder(storage: storage)
+    do {
+        try fallbackRecorder.start(initialState: before, episodeID: "fallback")
+        try fallbackRecorder.recordFlip(cell: 0, state: before, afterState: after)
+        let directory = try fallbackRecorder.finish(finalState: nil, result: .win)
+        let states = readJSONLines(directory.appendingPathComponent("states.jsonl"))
+        check(states.count == 2, "无最终状态时用 afterState 兜底")
+        let cells = states.last?["board"] as? [String: Any]
+        let list = cells?["cells"] as? [[String: Any]]
+        check(list?[0]["state"] as? String == "revealed", "兜底终局保留动作结果")
+    } catch {
+        check(false, "EpisodeRecorder 终局兜底失败：\(error)")
+    }
+
     // 走棋：点源格 + 点目标格，第二步状态带 selected。
     let moveRecorder = EpisodeRecorder(storage: storage)
     do {

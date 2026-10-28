@@ -79,7 +79,9 @@ final class EpisodeRecorder {
     @ObservationIgnored private var initialState: GameState?
     @ObservationIgnored private var statesHandle: FileHandle?
     @ObservationIgnored private var actionsHandle: FileHandle?
-    @ObservationIgnored private var lastState: GameState?
+    /// 最近一次动作后的棋盘；结算页 `perception.gameState` 可能已被清空，
+    /// 用它兜底写终局，避免留下没有 meta 的半成品 episode。
+    @ObservationIgnored private var lastKnownState: GameState?
 
     var statusText: String {
         if let lastError { return "录制失败：\(lastError)" }
@@ -137,23 +139,35 @@ final class EpisodeRecorder {
         self.directoryURL = directory
         self.startedAt = startedAt
         self.initialState = initialState
-        self.lastState = initialState
+        self.lastKnownState = initialState
         self.actionCount = 0
         self.isRecording = true
     }
 
     /// 记录一次翻牌点击（动作前状态 = `state`）。
-    func recordFlip(cell: Int, state: GameState) throws {
+    ///
+    /// `afterState` 是等待棋盘稳定后读到的动作后状态；结算页可能清空感知，
+    /// 录制器用它兜底 `finish(finalState: nil)`。
+    func recordFlip(
+        cell: Int,
+        state: GameState,
+        afterState: GameState? = nil
+    ) throws {
         try writeState(state)
         try append(EpisodeTap(cell: cell))
-        lastState = state
+        lastKnownState = afterState ?? state
     }
 
     /// 记录一次走棋：先点源格，再点目标格。
     ///
     /// 第二步的动作前状态是“源格已选中”；这是 UI 选中态，不是新的棋盘状态，
     /// 但对 `tap_cell` 回放是必要的（Python 用 `selected` 推断 from）。
-    func recordMove(from: Int, to: Int, state: GameState) throws {
+    func recordMove(
+        from: Int,
+        to: Int,
+        state: GameState,
+        afterState: GameState? = nil
+    ) throws {
         try writeState(state)
         try append(EpisodeTap(cell: from))
 
@@ -161,7 +175,7 @@ final class EpisodeRecorder {
         selected.selected = from
         try writeState(selected)
         try append(EpisodeTap(cell: to))
-        lastState = selected
+        lastKnownState = afterState ?? selected
     }
 
     /// 结束并写 meta/reward；`finalState` 是终局棋盘（结果页仍可读）。
@@ -176,10 +190,12 @@ final class EpisodeRecorder {
         }
         if let finalState {
             try writeState(finalState)
-            lastState = finalState
-        } else if actionCount == 0, let initialState {
+            lastKnownState = finalState
+        } else if let lastKnownState {
+            // 结果页会清空实时感知；用最近一次动作后的棋盘兜底。
+            try writeState(lastKnownState)
+        } else if let initialState {
             try writeState(initialState)
-            lastState = initialState
         } else if actionCount > 0 {
             throw EpisodeRecorderError.missingFinalState
         }
@@ -216,7 +232,7 @@ final class EpisodeRecorder {
         directoryURL = nil
         actionCount = 0
         initialState = nil
-        lastState = nil
+        lastKnownState = nil
     }
 
     // MARK: - 写盘

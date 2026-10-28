@@ -100,12 +100,22 @@ final class BoardTapService {
            recorder.isRecording,
            let beforeState
         {
+            let afterState = perception.gameState
             do {
                 switch action {
                 case .flip(let cell):
-                    try recorder.recordFlip(cell: cell, state: beforeState)
+                    try recorder.recordFlip(
+                        cell: cell,
+                        state: beforeState,
+                        afterState: afterState
+                    )
                 case .move(let from, let to):
-                    try recorder.recordMove(from: from, to: to, state: beforeState)
+                    try recorder.recordMove(
+                        from: from,
+                        to: to,
+                        state: beforeState,
+                        afterState: afterState
+                    )
                 }
             } catch {
                 store.note("episode 记录失败：\(error.localizedDescription)")
