@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ HELP_BY_COMMAND = {
     "eval": "模拟器/离线评测（M3 实现）",
     "export": "导出 safetensors + manifest（M3 实现）",
     "inspect": "检查 episode / 回放（M2 实现）",
+    "selfplay": "模拟器自博弈并写 episode（M2-5）",
     "dataset": "从样本库导出 Create ML 数据集（M1-3）",
     "coreml": "把基线模型导出为 Core ML（M1-5）",
     "verify": "核对 Core ML 包在 test/val 留出集上的准确率",
@@ -90,6 +92,17 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--seed", type=int, default=None)
         if command in ("screen-coreml", "screen-verify"):
             p.add_argument("--dataset", help="用于一致性核对的屏幕数据集目录")
+        if command == "selfplay":
+            p.add_argument("--games", type=int, default=1)
+            p.add_argument("--seed", type=int, default=0)
+            p.add_argument("--agent0", default="heuristic")
+            p.add_argument("--agent1", default="random")
+        if command == "inspect":
+            p.add_argument(
+                "--json",
+                action="store_true",
+                help="以 JSON 输出检查报告",
+            )
         if command == "dataset":
             p.add_argument(
                 "--val-session",
@@ -459,6 +472,97 @@ def main(argv: list[str] | None = None) -> int:
             print(f"       跨会话重复图 {summary.leaked_images} 张，已归入 train")
         if summary.warnings:
             print(f"       跳过/警告 {len(summary.warnings)} 条，见 manifest.json", file=sys.stderr)
+        return 0
+
+    if args.command == "inspect":
+        from wgai.sim.replay import ReplayError, find_episodes, inspect_path
+        from wgai.sim.rules import Rules
+
+        if not args.input:
+            print("[wgai] inspect 需要 --input <episode 目录>", file=sys.stderr)
+            return 2
+        try:
+            rules = Rules.load()
+            paths = find_episodes(args.input)
+            reports = [inspect_path(path, rules=rules) for path in paths]
+        except (ReplayError, OSError, ValueError) as error:
+            print(f"[wgai] 回放检查失败：{error}", file=sys.stderr)
+            return 2
+        ok = all(report.ok for report in reports)
+        if args.json:
+            if len(reports) == 1:
+                report = reports[0]
+                payload = {
+                    "ok": report.ok,
+                    "episode": report.episode_id,
+                    "path": str(report.path),
+                    "simulated": report.simulated,
+                    "rulesVersion": report.rules_version,
+                    "plies": report.plies,
+                    "outcome": report.outcome,
+                    "errors": report.errors,
+                    "warnings": report.warnings,
+                }
+            else:
+                payload = {
+                    "ok": ok,
+                    "count": len(reports),
+                    "failures": sum(1 for report in reports if not report.ok),
+                    "episodes": [
+                        {
+                            "episode": report.episode_id,
+                            "path": str(report.path),
+                            "ok": report.ok,
+                            "simulated": report.simulated,
+                            "rulesVersion": report.rules_version,
+                            "plies": report.plies,
+                            "outcome": report.outcome,
+                            "errors": report.errors,
+                            "warnings": report.warnings,
+                        }
+                        for report in reports
+                    ],
+                }
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            for report in reports:
+                print(f"[wgai] {report.summary()}")
+                for message in report.errors:
+                    print(f"  ERROR {message}", file=sys.stderr)
+                for message in report.warnings:
+                    print(f"  WARN {message}", file=sys.stderr)
+            if len(reports) > 1:
+                print(
+                    f"[wgai] {sum(1 for report in reports if report.ok)}"
+                    f"/{len(reports)} 局通过"
+                )
+        return 0 if ok else 1
+
+    if args.command == "selfplay":
+        from wgai.sim.rules import Rules
+        from wgai.sim.selfplay import build_agent, play_game, write_episode
+
+        if not args.out:
+            print("[wgai] selfplay 需要 --out <episode 根目录>", file=sys.stderr)
+            return 2
+        try:
+            rules = Rules.load()
+            agents = [build_agent(args.agent0), build_agent(args.agent1)]
+        except ValueError as error:
+            print(f"[wgai] 自博弈配置失败：{error}", file=sys.stderr)
+            return 2
+        root = Path(args.out).expanduser()
+        root.mkdir(parents=True, exist_ok=True)
+        for index in range(args.games):
+            result = play_game(
+                rules,
+                agents,
+                seed=args.seed + index,
+                first_player=index % 2,
+            )
+            directory = root / f"game-{args.seed + index:06d}"
+            write_episode(result, directory, overwrite=True)
+            print(f"[wgai] {directory} {result.summary()}")
         return 0
 
     print(

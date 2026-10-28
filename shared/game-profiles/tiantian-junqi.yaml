@@ -48,7 +48,9 @@ window:
 board:
   rows: 5                              # P0-3 截图实测：5 行 × 12 列 = 60 格
   cols: 12
-  piecesPerSide: 30                    # 开局满盘 60 枚（30/方）；逐类数量待清点
+  piecesPerSide: 25                    # M2 规则确认：50 枚棋子 + 10 个空行营
+  emptyCamps: 10                       # 行营开局为空，可被棋子占据
+  rulesVersion: fanfanqi-1             # 规则来源 shared/rules/fanfanqi.md
   theme: default                       # 待实测；校准文件记录 theme，不匹配则要求重新校准
 
 opponent:

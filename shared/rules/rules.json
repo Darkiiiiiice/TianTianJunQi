@@ -1,0 +1,65 @@
+{
+  "rulesVersion": "fanfanqi-1",
+  "source": "shared/rules/fanfanqi.md（腾讯《军旗翻翻棋》帮助页 + 5×12 棋盘实测）",
+  "board": {
+    "rows": 5,
+    "cols": 12,
+    "camps": [
+      [1, 2], [1, 4], [2, 3], [3, 2], [3, 4],
+      [1, 7], [1, 9], [2, 8], [3, 7], [3, 9]
+    ],
+    "railwayRows": [0, 4],
+    "railwayCols": [1, 5, 6, 10],
+    "campConnections": "diagonal"
+  },
+  "pieces": {
+    "commander": 1,
+    "army_commander": 1,
+    "division_commander": 2,
+    "brigade_commander": 2,
+    "regiment_commander": 2,
+    "battalion_commander": 2,
+    "company_commander": 3,
+    "platoon_commander": 3,
+    "engineer": 3,
+    "mine": 3,
+    "bomb": 2,
+    "flag": 1
+  },
+  "ranks": {
+    "commander": 9,
+    "army_commander": 8,
+    "division_commander": 7,
+    "brigade_commander": 6,
+    "regiment_commander": 5,
+    "battalion_commander": 4,
+    "company_commander": 3,
+    "platoon_commander": 2,
+    "engineer": 1
+  },
+  "rules": {
+    "campSafe": true,
+    "mineImmobile": true,
+    "mineOnlyEngineerOrBomb": true,
+    "flagImmobile": true,
+    "flagRequiresMinesCleared": true,
+    "flagCaptureWins": true,
+    "bombMutualDestruction": true,
+    "hiddenFriendlyRevealOnly": true,
+    "hiddenMineKillsAttacker": true,
+    "hiddenFlagRevealOnly": true,
+    "engineerRailwayTurns": true,
+    "nonEngineerRailwayStraight": true,
+    "extraTurnOnCapture": false,
+    "firstMoveAfterFlip": "opponent"
+  },
+  "draw": {
+    "noCapturePlies": 80,
+    "maxPlies": 300
+  },
+  "repetition": {
+    "basis": "sameMove",
+    "windowMoves": 8,
+    "maxRepeats": 4
+  }
+}
