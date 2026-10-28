@@ -43,6 +43,8 @@ final class BoardTapService {
     }
 
     var config = BoardTapConfig()
+    /// M1-9：实时延迟采样（由 MainView 注入）。
+    var performance: PerformanceMonitor?
 
     init(config: BoardTapConfig = BoardTapConfig()) {
         self.config = config
@@ -71,7 +73,8 @@ final class BoardTapService {
         screenState: ScreenStateService,
         perception: BoardPerceptionService,
         injector: InputInjector,
-        store: AppStateStore
+        store: AppStateStore,
+        automatic: Bool = false
     ) async -> BoardTapResult {
         lastAction = action
         let result = await run(
@@ -82,7 +85,8 @@ final class BoardTapService {
             screenState: screenState,
             perception: perception,
             injector: injector,
-            store: store
+            store: store,
+            automatic: automatic
         )
         lastResult = result
         phase = .idle
@@ -98,8 +102,10 @@ final class BoardTapService {
         screenState: ScreenStateService,
         perception: BoardPerceptionService,
         injector: InputInjector,
-        store: AppStateStore
+        store: AppStateStore,
+        automatic: Bool
     ) async -> BoardTapResult {
+        let decisionStartedAt = PerfClock.now()
         guard phase == .idle else { return .refused(.busy) }
         guard isArmed else { return .refused(.disarmed) }
         guard screenState.state == .board else { return .refused(.notInBoard) }
@@ -144,36 +150,62 @@ final class BoardTapService {
             points[index] = point
         }
 
+        // 决策（校验、坐标换算、可点性）到此结束；剩下的都是注入开销。
+        performance?.record(
+            .tapDecision,
+            milliseconds: PerfClock.milliseconds(since: decisionStartedAt)
+        )
+
         phase = .tapping
+        var firstIssuedAt: Double?
+        var clickMilliseconds: Double = 0
         do {
             switch action {
             case .flip(let cell):
-                try await tap(
+                let report = try await tap(
                     cell: cell,
                     point: points[cell] ?? .zero,
                     window: window,
                     injector: injector,
                     store: store
                 )
+                firstIssuedAt = report.issuedAt
+                clickMilliseconds = report.clickMilliseconds
             case .move(let from, let to):
-                try await tap(
+                let first = try await tap(
                     cell: from,
                     point: points[from] ?? .zero,
                     window: window,
                     injector: injector,
                     store: store
                 )
+                firstIssuedAt = first.issuedAt
+                clickMilliseconds = first.clickMilliseconds
                 try await Task.sleep(for: .seconds(config.selectDelay))
-                try await tap(
+                let second = try await tap(
                     cell: to,
                     point: points[to] ?? .zero,
                     window: window,
                     injector: injector,
                     store: store
                 )
+                clickMilliseconds += second.clickMilliseconds
             }
         } catch {
             return .unverified("点击失败：\(error.localizedDescription)")
+        }
+        performance?.record(.tapClick, milliseconds: clickMilliseconds)
+
+        // 只有自动决策才把「帧捕获 → 点击发出」记成端到端；
+        // 手动按钮的等待时间属于用户思考/操作，不能混进性能验收。
+        if automatic,
+           let firstIssuedAt,
+           let observedAt = perception.lastFrameCapturedAt,
+           firstIssuedAt >= observedAt {
+            performance?.record(
+                .endToEnd,
+                milliseconds: (firstIssuedAt - observedAt) * 1000
+            )
         }
 
         phase = .verifying
@@ -207,7 +239,7 @@ final class BoardTapService {
         window: GameWindowCandidate,
         injector: InputInjector,
         store: AppStateStore
-    ) async throws {
+    ) async throws -> ClickReport {
         let report = try await injector.click(
             normalized: point,
             windowID: window.id,
@@ -220,6 +252,7 @@ final class BoardTapService {
                 + "屏幕 \(Int(report.point.x)),\(Int(report.point.y))"
                 + (report.cursorRestored ? "（指针已还原）" : "")
         )
+        return report
     }
 
     private static func format(_ point: CGPoint) -> String {

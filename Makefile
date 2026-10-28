@@ -11,7 +11,7 @@ SCREEN_MODEL ?= $(SCREEN_DATASET)/models/baseline
 
 .DEFAULT_GOAL := help
 
-.PHONY: bootstrap record train export eval play dataset train-classifier export-coreml verify-models screen-dataset screen-train export-screen verify-screen test test-python test-swift clean help
+.PHONY: bootstrap record train export eval play dataset train-classifier export-coreml verify-models screen-dataset screen-train export-screen verify-screen test test-python test-swift perf clean help
 
 bootstrap: ## 初始化环境：uv sync + 校验 Xcode 工程
 	cd $(TRAINER) && uv sync
@@ -63,6 +63,9 @@ test-python: ## Python 单测
 
 test-swift: ## Swift 感知内核单测（BoardGeometry / BoardStabilizer）
 	./scripts/run-swift-tests.sh
+
+perf: ## M1-9 离线回放基准：感知 → 动作端到端延迟（PERF_BOARDS / PERF_SCREENS 可覆盖）
+	./scripts/run-perf-bench.sh $(PERF_ARGS)
 
 clean: ## 清理 Python 缓存
 	find . -name '__pycache__' -type d -prune -exec rm -rf {} +

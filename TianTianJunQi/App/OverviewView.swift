@@ -16,6 +16,7 @@ struct OverviewView: View {
     let perception: BoardPerceptionService
     let tapService: BoardTapService
     let injector: InputInjector
+    let performance: PerformanceMonitor
     let boardRows: Int
     let boardCols: Int
     /// 调试：只验证入口点击，不点场次卡（不开始真人匹配）。
@@ -345,6 +346,8 @@ struct OverviewView: View {
 
             tapRow
 
+            performanceRow
+
             if let error = capture.lastError {
                 Text(error)
                     .font(.caption)
@@ -602,6 +605,64 @@ struct OverviewView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
+    }
+
+    /// M1-9：实时延迟摘要。只显示观测值，不参与验收判断（验收走离线回放基准）。
+    private var performanceRow: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text("性能")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text(performance.summaryText)
+                    .font(.caption2)
+                    .foregroundStyle(performance.endToEndStats == nil ? .secondary : performanceColor)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                Button("重置") { performance.reset() }
+                    .buttonStyle(.link)
+                    .font(.caption2)
+
+                Button("导出报告") {
+                    if let url = performance.exportReport(source: "live", note: "应用内实时采样") {
+                        store.note("性能报告已保存：\(url.path)")
+                    } else {
+                        store.note("性能报告导出失败")
+                    }
+                }
+                .buttonStyle(.link)
+                .font(.caption2)
+                .disabled(performance.recorders.isEmpty)
+
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([StorageKit().performanceURL])
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .buttonStyle(.link)
+                .controlSize(.mini)
+                .help("打开性能报告目录")
+            }
+
+            let stats = PerfStage.allCases.compactMap { stage -> String? in
+                guard let result = performance.recorders[stage]?.stats else { return nil }
+                return "\(stage.label) \(Int(result.p95Milliseconds))ms"
+            }
+            if !stats.isEmpty {
+                Text("p95 · " + stats.joined(separator: " · "))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private var performanceColor: Color {
+        guard let stats = performance.endToEndStats else { return .secondary }
+        return stats.p95Milliseconds < PerformanceBudget.endToEndMilliseconds ? .green : .orange
     }
 
     private var tapPointText: String {

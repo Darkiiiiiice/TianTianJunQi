@@ -14,6 +14,8 @@ struct MainView: View {
     @State private var autoSampler = BoardAutoSampler()
     @State private var perception = BoardPerceptionService()
     @State private var tapService = BoardTapService()
+    /// M1-9：实时延迟采样，供概览页与报告导出使用。
+    @State private var performance = PerformanceMonitor()
     @State private var gameProfile = GameProfile.tianTianJunQi
     @State private var selection: Page = .overview
     /// 调试开关：只验证入口点击，不点场次卡（不开始真人匹配）。
@@ -39,6 +41,7 @@ struct MainView: View {
                 calibration: calibration, autoSampler: autoSampler,
                 perception: perception,
                 tapService: tapService, injector: injector,
+                performance: performance,
                 boardRows: gameProfile.board.rows,
                 boardCols: gameProfile.board.cols,
                 entryOnly: $entryOnly,
@@ -67,6 +70,10 @@ struct MainView: View {
             .tag(Page.settings)
         }
         .onAppear {
+            // M1-9：各服务只记录，不改变感知/动作行为。
+            screenState.performance = performance
+            perception.performance = performance
+            tapService.performance = performance
             permissions.refresh()
             windows.refresh()
             syncCapture()

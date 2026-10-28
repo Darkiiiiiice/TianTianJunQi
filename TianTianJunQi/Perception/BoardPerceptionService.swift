@@ -41,6 +41,9 @@ final class BoardPerceptionService {
     /// 最近一次「切图 + 推理 + 投票」耗时（毫秒），M1-9 延迟验收用。
     private(set) var lastInferenceMilliseconds: Double?
     private(set) var lastUpdatedAt: Date?
+    /// 当前稳定棋盘所用的最新帧捕获时刻（`CapturedFrame.capturedAt`，主机时钟秒）。
+    /// 动作链路用它计算「感知 → 动作」的真实端到端延迟。
+    private(set) var lastFrameCapturedAt: Double?
     /// 本次会话累计推理帧数。
     private(set) var observationCount = 0
 
@@ -68,6 +71,8 @@ final class BoardPerceptionService {
     }
 
     var config = BoardPerceptionConfig()
+    /// M1-9：实时延迟采样（由 MainView 注入）。
+    var performance: PerformanceMonitor?
 
     @ObservationIgnored private var stabilizer: BoardStabilizer
     @ObservationIgnored private var classifier: BoardPieceClassifier?
@@ -208,23 +213,28 @@ final class BoardPerceptionService {
             guard let classifier else { continue }
 
             inFlight = true
-            let started = Date()
+            let classifyStarted = PerfClock.now()
             let observation = await Task.detached(priority: .userInitiated) {
                 try? classifier.classify(frame: frame, grid: grid)
             }.value
+            let classifyMilliseconds = PerfClock.milliseconds(since: classifyStarted)
+            performance?.record(.boardClassify, milliseconds: classifyMilliseconds)
+
+            let stabilizeStarted = PerfClock.now()
+            let output = observation.flatMap {
+                stabilizer.update($0, at: Date().timeIntervalSinceReferenceDate)
+            }
+            let stabilizeMilliseconds = PerfClock.milliseconds(since: stabilizeStarted)
             inFlight = false
 
-            let elapsed = Date().timeIntervalSince(started) * 1000
-            guard let observation, let output = stabilizer.update(
-                observation,
-                at: Date().timeIntervalSinceReferenceDate
-            ) else {
+            guard let output else {
                 phase = .failed("分类或投票失败")
                 continue
             }
 
             board = output
-            lastInferenceMilliseconds = elapsed
+            lastInferenceMilliseconds = classifyMilliseconds + stabilizeMilliseconds
+            lastFrameCapturedAt = frame.capturedAt
             lastUpdatedAt = Date()
             observationCount += 1
             phase = output.isSettling ? .settling : .running
@@ -241,9 +251,14 @@ final class BoardPerceptionService {
                 lastTimerAt = now
             }
 
+            let buildStarted = PerfClock.now()
             let state = stateBuilder.build(board: output, timers: timers)
             gameState = state
             stateJSON = state.jsonString()
+            performance?.record(
+                .boardState,
+                milliseconds: PerfClock.milliseconds(since: buildStarted) + stabilizeMilliseconds
+            )
         }
     }
 
@@ -256,6 +271,7 @@ final class BoardPerceptionService {
         timers = nil
         lastTimerAt = nil
         lastUpdatedAt = nil
+        lastFrameCapturedAt = nil
         observationCount = 0
     }
 }

@@ -34,6 +34,10 @@ struct StorageKit {
     var popupsURL: URL {
         perceptionURL.appendingPathComponent("popups", isDirectory: true)
     }
+    /// M1-9：实时/回放性能报告。
+    var performanceURL: URL {
+        perceptionURL.appendingPathComponent("performance", isDirectory: true)
+    }
     var simURL: URL { rootURL.appendingPathComponent("sim", isDirectory: true) }
     var logsURL: URL { rootURL.appendingPathComponent("logs", isDirectory: true) }
 
@@ -45,6 +49,7 @@ struct StorageKit {
         }
         try fm.createDirectory(at: screenSamplesURL, withIntermediateDirectories: true)
         try fm.createDirectory(at: popupsURL, withIntermediateDirectories: true)
+        try fm.createDirectory(at: performanceURL, withIntermediateDirectories: true)
     }
 
     // MARK: game-profile.json

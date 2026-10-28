@@ -43,6 +43,12 @@ struct ClickReport: Sendable {
     let delivery: ClickDelivery
     /// 指针是否已还原到点击前位置。
     let cursorRestored: Bool
+    /// 鼠标按下事件投递时刻（`PerfClock` 秒），端到端延迟的终点。
+    let issuedAt: Double
+    /// 等待用户停止操作所花的时间（毫秒）；不是注入本身的开销。
+    let idleWaitMilliseconds: Double
+    /// 从开始注入（定位、抬窗复核、移动）到按下事件投递的耗时（毫秒）。
+    let clickMilliseconds: Double
 }
 
 /// 鼠标注入（设计文档 §9.2）。
@@ -75,9 +81,13 @@ actor InputInjector {
         windowID: CGWindowID,
         pid: pid_t
     ) async throws -> ClickReport {
+        let startedAt = PerfClock.now()
+        var idleWaitMilliseconds: Double = 0
         if respectUserInput {
             try await waitForUserIdle()
+            idleWaitMilliseconds = PerfClock.milliseconds(since: startedAt)
         }
+        let activeStartedAt = PerfClock.now()
 
         // 关键：等完用户操作后立刻重读窗口，用“当前 bounds + 归一化偏移”落点。
         guard let windowBounds = WindowGeometry.frame(of: windowID) else {
@@ -140,6 +150,8 @@ actor InputInjector {
         post(move)
         try await Task.sleep(for: .milliseconds(Int.random(in: 20...40)))
         post(down)
+        let issuedAt = PerfClock.now()
+        let clickMilliseconds = (issuedAt - activeStartedAt) * 1000
         try await Task.sleep(for: .milliseconds(Int.random(in: 45...80)))
         post(up)
 
@@ -157,7 +169,10 @@ actor InputInjector {
 
         return ClickReport(
             point: global, windowBounds: windowBounds,
-            delivery: delivery, cursorRestored: restored
+            delivery: delivery, cursorRestored: restored,
+            issuedAt: issuedAt,
+            idleWaitMilliseconds: idleWaitMilliseconds,
+            clickMilliseconds: clickMilliseconds
         )
     }
 

@@ -371,14 +371,6 @@ func testCellObservationNormalization() {
 
 // MARK: - SnapshotLibrary
 
-struct CapturedFrame: @unchecked Sendable {
-    let pixelBuffer: CVPixelBuffer
-    let scale: CGFloat
-    let timestamp: Double
-    let contentRect: CGRect
-    static let fullFrame = CGRect(x: 0, y: 0, width: 1, height: 1)
-}
-
 private func makeBoardBuffer(width: Int = 640, height: Int = 400) -> CVPixelBuffer {
     var buffer: CVPixelBuffer?
     let status = CVPixelBufferCreate(
@@ -1821,6 +1813,78 @@ func testPopupRoundTracker() {
     check(!zero.beginRound(), "0 轮预算直接拒绝")
 }
 
+// MARK: - PerfKit
+
+func testPerfKit() {
+    print("PerfKit · 延迟统计")
+
+    var empty = LatencyRecorder(capacity: 4)
+    check(empty.stats == nil, "无样本时 stats 为 nil")
+
+    empty.record(.nan)
+    empty.record(-1)
+    check(empty.values.isEmpty, "非法样本被丢弃")
+
+    var recorder = LatencyRecorder(capacity: 3)
+    for value in [10.0, 20.0, 30.0, 40.0] {
+        recorder.record(value)
+    }
+    check(recorder.values == [20, 30, 40], "环形窗口只保留最近 3 个")
+    check(recorder.stats?.count == 3, "样本数正确")
+    check(recorder.stats?.minMilliseconds == 20, "min 正确")
+    check(recorder.stats?.maxMilliseconds == 40, "max 正确")
+    check(recorder.stats?.meanMilliseconds == 30, "mean 正确")
+
+    let sorted = (1...100).map(Double.init)
+    check(LatencyRecorder.percentile(sorted, 0.50) == 50, "p50 用最近秩")
+    check(LatencyRecorder.percentile(sorted, 0.95) == 95, "p95 用最近秩")
+    check(LatencyRecorder.percentile(sorted, 0) == 1, "p0 取最小值")
+    check(LatencyRecorder.percentile(sorted, 1) == 100, "p100 取最大值")
+    check(LatencyRecorder.percentile([], 0.95) == 0, "空数组返回 0")
+
+    check(PerfStage.endToEnd.isAcceptanceGate, "端到端是唯一验收门槛")
+    check(!PerfStage.screenOCR.isAcceptanceGate, "OCR 不是验收门槛")
+    check(
+        PerfStage.endToEnd.referenceBudgetMilliseconds == PerformanceBudget.endToEndMilliseconds,
+        "端到端预算与设计文档一致"
+    )
+
+    var fast: [PerfStage: LatencyRecorder] = [:]
+    var fastEnd = LatencyRecorder()
+    fastEnd.record(199)
+    fast[.endToEnd] = fastEnd
+    let passing = PerfReport.make(
+        source: "test",
+        recorders: fast,
+        environment: [:]
+    )
+    check(passing.passed, "p95 < 200ms 判定达标")
+    check(passing.summaryText.contains("达标"), "摘要显示达标")
+
+    var slow: [PerfStage: LatencyRecorder] = [:]
+    var slowEnd = LatencyRecorder()
+    slowEnd.record(200)
+    slow[.endToEnd] = slowEnd
+    let failing = PerfReport.make(
+        source: "test",
+        recorders: slow,
+        environment: [:]
+    )
+    check(!failing.passed, "p95 = 200ms 不算达标")
+
+    var missing: [PerfStage: LatencyRecorder] = [:]
+    var ocr = LatencyRecorder()
+    ocr.record(50)
+    missing[.screenOCR] = ocr
+    let noGate = PerfReport.make(
+        source: "test",
+        recorders: missing,
+        environment: [:]
+    )
+    check(!noGate.passed, "无端到端样本不判定达标")
+    check(noGate.stage(.screenOCR)?.stats.p95Milliseconds == 50, "报告保留分阶段统计")
+}
+
 // MARK: - Main
 
 testPieceCatalog()
@@ -1851,6 +1915,7 @@ testAutoLabelPersistence()
 testBoardChangeDetector()
 testBoardCellDeltas()
 testAutoSampleTracker()
+testPerfKit()
 
 if failures > 0 {
     print("\n\(failures)/\(checks) 个断言失败")

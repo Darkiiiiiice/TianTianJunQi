@@ -19,7 +19,7 @@ enum ScreenClassifierError: LocalizedError {
         case .missingOutput(let name):
             "屏幕分类器 \(name) 缺少 classLabel / classLabel_probs 输出"
         case .imageRenderFailed:
-            "屏幕分类器输入图像缩放失败"
+            "屏幕分类器输入图像渲染失败"
         }
     }
 }
@@ -38,7 +38,8 @@ struct ScreenPrediction: Sendable {
 /// `main/modeLobby/matching/board/result/popup/unknown`。
 ///
 /// 模型在 app 启动时通过 `warmUp()` 预热一次，避免第一次状态切换时才编译/分配。
-struct ScreenClassifier: @unchecked Sendable {
+/// M1-9：输入走 CVPixelBuffer 直通，避免 CGImage → MLFeatureValue 的逐帧转换。
+nonisolated struct ScreenClassifier: @unchecked Sendable {
     static let defaultModelName = "screen"
     static let defaultMinConfidence = 0.60
 
@@ -79,14 +80,21 @@ struct ScreenClassifier: @unchecked Sendable {
         guard width > 0, height > 0 else {
             throw ScreenClassifierError.imageRenderFailed
         }
+        guard let buffer = PixelBufferRenderer.make(
+            width: width,
+            height: height,
+            pixelFormat: imageConstraint.pixelFormatType
+        ) else {
+            throw ScreenClassifierError.imageRenderFailed
+        }
         let color = CIImage(
             color: CIColor(red: 0.5, green: 0.5, blue: 0.5)
         ).cropped(to: CGRect(x: 0, y: 0, width: width, height: height))
-        guard let image = Self.ciContext.createCGImage(color, from: color.extent) else {
+        guard PixelBufferRenderer.render(color, to: buffer, context: Self.ciContext) else {
             throw ScreenClassifierError.imageRenderFailed
         }
         let started = Date()
-        _ = try predict(image)
+        _ = try predict(buffer)
         return Date().timeIntervalSince(started) * 1000
     }
 
@@ -107,37 +115,28 @@ struct ScreenClassifier: @unchecked Sendable {
             )
         let cropped = image.cropped(to: crop)
 
-        let width = CGFloat(imageConstraint.pixelsWide)
-        let height = CGFloat(imageConstraint.pixelsHigh)
+        let width = imageConstraint.pixelsWide
+        let height = imageConstraint.pixelsHigh
         guard width > 0, height > 0 else {
             throw ScreenClassifierError.imageRenderFailed
         }
-        let scaled = cropped.transformed(
-            by: CGAffineTransform(
-                scaleX: width / cropped.extent.width,
-                y: height / cropped.extent.height
-            )
-        )
-        let target = CGRect(
-            x: scaled.extent.minX,
-            y: scaled.extent.minY,
+        guard let buffer = PixelBufferRenderer.make(
             width: width,
-            height: height
-        )
-        guard let image = Self.ciContext.createCGImage(scaled, from: target) else {
+            height: height,
+            pixelFormat: imageConstraint.pixelFormatType
+        ) else {
             throw ScreenClassifierError.imageRenderFailed
         }
-        return try predict(image)
+        guard PixelBufferRenderer.render(cropped, to: buffer, context: Self.ciContext) else {
+            throw ScreenClassifierError.imageRenderFailed
+        }
+        return try predict(buffer)
     }
 
     // MARK: - Core ML
 
-    private func predict(_ image: CGImage) throws -> ScreenPrediction {
-        let value = try MLFeatureValue(
-            cgImage: image,
-            constraint: imageConstraint,
-            options: nil
-        )
+    private func predict(_ buffer: CVPixelBuffer) throws -> ScreenPrediction {
+        let value = MLFeatureValue(pixelBuffer: buffer)
         let provider = try MLDictionaryFeatureProvider(dictionary: [inputName: value])
         let result = try model.prediction(from: provider)
         guard let label = result.featureValue(for: "classLabel")?.stringValue else {

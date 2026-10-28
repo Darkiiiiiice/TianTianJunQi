@@ -20,10 +20,13 @@ swiftc \
   "$ROOT/TianTianJunQi/Perception/BoardTurnReader.swift" \
   "$ROOT/TianTianJunQi/Perception/GameState.swift" \
   "$ROOT/TianTianJunQi/Perception/OCRText.swift" \
+  "$ROOT/TianTianJunQi/Perception/PerfKit.swift" \
+  "$ROOT/TianTianJunQi/Perception/PixelBufferRenderer.swift" \
   "$ROOT/TianTianJunQi/Perception/PieceCatalog.swift" \
   "$ROOT/TianTianJunQi/Perception/PopupResolver.swift" \
   "$ROOT/TianTianJunQi/Perception/ScreenState.swift" \
   "$ROOT/TianTianJunQi/Perception/SnapshotLibrary.swift" \
+  "$ROOT/TianTianJunQi/Runtime/CaptureFrame.swift" \
   "$ROOT/TianTianJunQi/Storage/StorageKit.swift" \
   "$ROOT/Tests/SwiftPerception/main.swift" \
   -o "$BUILD_DIR/perception-tests"

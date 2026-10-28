@@ -1,5 +1,6 @@
 import CoreGraphics
 import CoreML
+import CoreVideo
 import Foundation
 
 enum BoardPieceClassifierError: LocalizedError {
@@ -23,7 +24,10 @@ enum BoardPieceClassifierError: LocalizedError {
 ///
 /// state 先判空/暗/明；只有 revealed 才继续跑 color 与 piece，省掉大部分推理。
 /// 任一环节置信度不足或标签不可用时降级为 unknown，交给 BoardStabilizer 投票。
-struct BoardPieceClassifier: @unchecked Sendable {
+///
+/// M1-9：格子直接渲染成 CVPixelBuffer 喂给 Core ML（跳过 CGImage 转换），
+/// state 用 batch 一次推理整盘；color/piece 只对已翻明格批量补一次。
+nonisolated struct BoardPieceClassifier: @unchecked Sendable {
     struct Config: Equatable, Sendable {
         var cellSize = 128
         /// 必须与 `BoardSnapshotExporter` 的训练口径一致。
@@ -38,6 +42,20 @@ struct BoardPieceClassifier: @unchecked Sendable {
     private struct Prediction {
         let label: String
         let confidence: Double
+
+        init?(provider: MLFeatureProvider) {
+            guard let label = provider.featureValue(for: "classLabel")?.stringValue else {
+                return nil
+            }
+            var probabilities: [String: Double] = [:]
+            provider.featureValue(for: "classLabel_probs")?.dictionaryValue.forEach { key, number in
+                if let key = key as? String {
+                    probabilities[key] = number.doubleValue
+                }
+            }
+            self.label = label
+            self.confidence = probabilities[label] ?? probabilities.values.max() ?? 0
+        }
     }
 
     private struct LoadedModel {
@@ -64,27 +82,33 @@ struct BoardPieceClassifier: @unchecked Sendable {
             self.imageConstraint = constraint
         }
 
-        func predict(_ image: CGImage) throws -> Prediction {
-            let value = try MLFeatureValue(
-                cgImage: image,
-                constraint: imageConstraint,
-                options: nil
+        func provider(_ buffer: CVPixelBuffer) throws -> MLDictionaryFeatureProvider {
+            try MLDictionaryFeatureProvider(
+                dictionary: [inputName: MLFeatureValue(pixelBuffer: buffer)]
             )
-            let provider = try MLDictionaryFeatureProvider(dictionary: [inputName: value])
-            let result = try model.prediction(from: provider)
-            guard let label = result.featureValue(for: "classLabel")?.stringValue else {
-                throw BoardPieceClassifierError.missingOutput(name)
-            }
-            var probabilities: [String: Double] = [:]
-            result.featureValue(for: "classLabel_probs")?.dictionaryValue.forEach { key, number in
-                if let key = key as? String {
-                    probabilities[key] = number.doubleValue
+        }
+
+        func predict(_ buffer: CVPixelBuffer) -> Prediction? {
+            guard let provider = try? provider(buffer),
+                  let output = try? model.prediction(from: provider)
+            else { return nil }
+            return Prediction(provider: output)
+        }
+
+        /// 批量推理；batch 不被支持时退回逐条。
+        func predict(_ buffers: [CVPixelBuffer]) -> [Prediction?] {
+            guard !buffers.isEmpty else { return [] }
+            do {
+                let providers = try buffers.map(provider)
+                let batch = MLArrayBatchProvider(array: providers)
+                let outputs = try model.predictions(fromBatch: batch)
+                return (0..<buffers.count).map { index in
+                    guard index < outputs.count else { return nil }
+                    return Prediction(provider: outputs.features(at: index))
                 }
+            } catch {
+                return buffers.map { predict($0) }
             }
-            return Prediction(
-                label: label,
-                confidence: probabilities[label] ?? probabilities.values.max() ?? 0
-            )
         }
     }
 
@@ -105,17 +129,56 @@ struct BoardPieceClassifier: @unchecked Sendable {
 
     /// 逐格推理，输出与 `grid` 行优先一致的棋盘观察。
     func classify(frame: CapturedFrame, grid: BoardGrid) throws -> BoardObservation {
-        let images = try BoardSnapshotExporter.cellImages(
+        let buffers = try BoardSnapshotExporter.cellPixelBuffers(
             from: frame,
             grid: grid,
             cellSize: config.cellSize,
             inset: config.inset
         )
-        var cells: [CellObservation] = []
-        cells.reserveCapacity(images.count)
-        for image in images {
-            cells.append(classify(image))
+        let statePredictions = state.predict(buffers)
+
+        var cells = [CellObservation](
+            repeating: .unknown(),
+            count: buffers.count
+        )
+        var revealedIndices: [Int] = []
+        revealedIndices.reserveCapacity(buffers.count)
+        for (index, prediction) in statePredictions.enumerated() {
+            guard let prediction else {
+                cells[index] = .unknown()
+                continue
+            }
+            if prediction.label == CellState.revealed.rawValue,
+               prediction.confidence >= config.minConfidence {
+                revealedIndices.append(index)
+            } else {
+                cells[index] = Self.observation(
+                    stateLabel: prediction.label,
+                    stateConfidence: prediction.confidence,
+                    minConfidence: config.minConfidence
+                )
+            }
         }
+
+        // 只有明子才继续判颜色与军衔；未翻明格完全不跑后两个模型。
+        if !revealedIndices.isEmpty {
+            let revealedBuffers = revealedIndices.map { buffers[$0] }
+            let colorPredictions = color.predict(revealedBuffers)
+            let piecePredictions = piece.predict(revealedBuffers)
+            for (offset, index) in revealedIndices.enumerated() {
+                guard let statePrediction = statePredictions[index] else { continue }
+                cells[index] = Self.observation(
+                    stateLabel: statePrediction.label,
+                    stateConfidence: statePrediction.confidence,
+                    colorLabel: colorPredictions[offset]?.label,
+                    colorConfidence: colorPredictions[offset]?.confidence ?? 0,
+                    pieceLabel: piecePredictions[offset]?.label,
+                    pieceConfidence: piecePredictions[offset]?.confidence ?? 0,
+                    minConfidence: config.minConfidence
+                )
+            }
+        }
+
         guard let observation = BoardObservation(
             rows: grid.rows,
             cols: grid.cols,
@@ -124,34 +187,6 @@ struct BoardPieceClassifier: @unchecked Sendable {
             preconditionFailure("格子数量与棋盘尺寸不一致")
         }
         return observation
-    }
-
-    // MARK: - 单格分类
-
-    private func classify(_ image: CGImage) -> CellObservation {
-        guard let statePrediction = try? state.predict(image) else {
-            return .unknown()
-        }
-        guard statePrediction.label == CellState.revealed.rawValue else {
-            return Self.observation(
-                stateLabel: statePrediction.label,
-                stateConfidence: statePrediction.confidence,
-                minConfidence: config.minConfidence
-            )
-        }
-
-        // 只有明子才继续判颜色与军衔。
-        let colorPrediction = try? color.predict(image)
-        let piecePrediction = try? piece.predict(image)
-        return Self.observation(
-            stateLabel: statePrediction.label,
-            stateConfidence: statePrediction.confidence,
-            colorLabel: colorPrediction?.label,
-            colorConfidence: colorPrediction?.confidence ?? 0,
-            pieceLabel: piecePrediction?.label,
-            pieceConfidence: piecePrediction?.confidence ?? 0,
-            minConfidence: config.minConfidence
-        )
     }
 
     /// 三模型输出 → CellObservation 的纯映射（置信度阈值、标签校验、中文名映射）。

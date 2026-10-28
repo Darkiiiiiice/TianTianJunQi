@@ -128,6 +128,29 @@ popups:
     - 2026-10-28: 登录奖励弹层 → OCR 命中「登录奖励」后用 popup.close.signIn 关闭。
 
 
+performance:
+  # M1-9：动作链路（动作门槛）。界面切换的 OCR 不计入此预算。
+  endToEndBudgetMs: 200
+  stages:
+    screenOCR: 120                     # 诊断预算
+    screenClassify: 15
+    boardClassify: 100
+    boardState: 15
+    tapDecision: 5
+    tapClick: 60
+  replayBenchmark:
+    command: make perf
+    lastRun: 2026-10-28
+    samples: { board: 30, screen: 20 }  # 分别为 302 / 124 份中均匀抽样
+    result: { p50Ms: 104.6, p95Ms: 146.9, maxMs: 153.1, passed: true }
+    repeatRuns: { p95Ms: [112.0, 122.9, 146.9] }  # 高负载下 3 次回放
+    boardStateAccuracy: 0.994
+    boardPieceAccuracy: 0.972
+    screenAccuracy: 0.80                # 20 份回放样本；训练留出集为 0.95
+    environment: "Apple M1 Pro / 32GB / macOS 27.0.1 / load average 8–29（高负载，结果偏保守）"
+    reportDir: perception/performance
+    note: 端到端 = 棋盘分类 + 稳定投票 + GameState 构建 + 动作决策 + 30ms 注入前延迟；OCR 是界面切换路径，不参与动作门槛。
+
 reward:
   win: 1.0
   loss: -1.0

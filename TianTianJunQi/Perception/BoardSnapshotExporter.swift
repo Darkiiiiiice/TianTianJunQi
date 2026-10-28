@@ -178,6 +178,50 @@ struct BoardSnapshotExporter {
         return images
     }
 
+    /// M1-9：直接渲染成 Core ML 输入尺寸的 CVPixelBuffer。
+    ///
+    /// 与 `cellImages` 共用透视校正几何，但跳过 CGImage，喂给
+    /// `MLFeatureValue(pixelBuffer:)` 时不再做一次图像转换。
+    static func cellPixelBuffers(
+        from frame: CapturedFrame,
+        grid: BoardGrid,
+        cellSize: Int = 128,
+        inset: CGFloat = 0.04
+    ) throws -> [CVPixelBuffer] {
+        let content = try contentImage(from: frame)
+        let width = content.extent.width
+        let height = content.extent.height
+        guard width > 8, height > 8 else { throw BoardSnapshotError.invalidFrame }
+
+        var buffers: [CVPixelBuffer] = []
+        buffers.reserveCapacity(grid.rows * grid.cols)
+        for row in 0..<grid.rows {
+            for col in 0..<grid.cols {
+                guard let buffer = PixelBufferRenderer.make(
+                    width: cellSize,
+                    height: cellSize
+                ) else {
+                    throw BoardSnapshotError.cellRenderFailed(row: row, col: col)
+                }
+                guard renderCell(
+                    content,
+                    grid: grid,
+                    row: row,
+                    col: col,
+                    size: cellSize,
+                    inset: inset,
+                    width: width,
+                    height: height,
+                    into: buffer
+                ) else {
+                    throw BoardSnapshotError.cellRenderFailed(row: row, col: col)
+                }
+                buffers.append(buffer)
+            }
+        }
+        return buffers
+    }
+
     /// 按行列取一格的透视校正图；export 与内存切图共用这一处几何。
     private static func renderCell(
         _ content: CIImage,
@@ -189,27 +233,50 @@ struct BoardSnapshotExporter {
         width: CGFloat,
         height: CGFloat
     ) -> CGImage? {
-        let bounds = grid.cellRect(row: row, col: col, inset: inset)
-        let topLeft = pixelPoint(
-            grid.point(u: bounds.u0, v: bounds.v0), width: width, height: height
-        )
-        let topRight = pixelPoint(
-            grid.point(u: bounds.u1, v: bounds.v0), width: width, height: height
-        )
-        let bottomLeft = pixelPoint(
-            grid.point(u: bounds.u0, v: bounds.v1), width: width, height: height
-        )
-        let bottomRight = pixelPoint(
-            grid.point(u: bounds.u1, v: bounds.v1), width: width, height: height
-        )
-        return rectify(
+        guard let output = rectifiedImage(
             content,
-            topLeft: topLeft,
-            topRight: topRight,
-            bottomLeft: bottomLeft,
-            bottomRight: bottomRight,
-            size: size
+            grid: grid,
+            row: row,
+            col: col,
+            size: size,
+            inset: inset,
+            width: width,
+            height: height
+        ) else { return nil }
+        // CI 的 extent 常带浮点误差（例如 128.00000000000003），
+        // createCGImage 会向上取整成 129px；显式裁到整数尺寸保证训练输入一致。
+        let target = CGRect(
+            x: output.extent.minX,
+            y: output.extent.minY,
+            width: CGFloat(size),
+            height: CGFloat(size)
         )
+        return ciContext.createCGImage(output, from: target)
+    }
+
+    /// M1-9：同一份透视校正结果直接渲染进 CVPixelBuffer。
+    private static func renderCell(
+        _ content: CIImage,
+        grid: BoardGrid,
+        row: Int,
+        col: Int,
+        size: Int,
+        inset: CGFloat,
+        width: CGFloat,
+        height: CGFloat,
+        into buffer: CVPixelBuffer
+    ) -> Bool {
+        guard let output = rectifiedImage(
+            content,
+            grid: grid,
+            row: row,
+            col: col,
+            size: size,
+            inset: inset,
+            width: width,
+            height: height
+        ) else { return false }
+        return PixelBufferRenderer.render(output, to: buffer, context: ciContext)
     }
 
     /// 与预览/OCR 相同的裁剪方式，并把 extent 平移到 (0,0)。
@@ -245,6 +312,41 @@ struct BoardSnapshotExporter {
         CGPoint(x: point.x * width, y: (1 - point.y) * height)
     }
 
+    /// 取一格的透视校正结果（浮点 extent，尺寸为 `size`）。
+    /// CGImage 与 CVPixelBuffer 两条路径共用，避免几何口径漂移。
+    private static func rectifiedImage(
+        _ image: CIImage,
+        grid: BoardGrid,
+        row: Int,
+        col: Int,
+        size: Int,
+        inset: CGFloat,
+        width: CGFloat,
+        height: CGFloat
+    ) -> CIImage? {
+        let bounds = grid.cellRect(row: row, col: col, inset: inset)
+        let topLeft = pixelPoint(
+            grid.point(u: bounds.u0, v: bounds.v0), width: width, height: height
+        )
+        let topRight = pixelPoint(
+            grid.point(u: bounds.u1, v: bounds.v0), width: width, height: height
+        )
+        let bottomLeft = pixelPoint(
+            grid.point(u: bounds.u0, v: bounds.v1), width: width, height: height
+        )
+        let bottomRight = pixelPoint(
+            grid.point(u: bounds.u1, v: bounds.v1), width: width, height: height
+        )
+        return rectify(
+            image,
+            topLeft: topLeft,
+            topRight: topRight,
+            bottomLeft: bottomLeft,
+            bottomRight: bottomRight,
+            size: size
+        )
+    }
+
     /// 用透视校正把任意四边形格子拉成固定尺寸的正方形。
     private static func rectify(
         _ image: CIImage,
@@ -253,7 +355,7 @@ struct BoardSnapshotExporter {
         bottomLeft: CGPoint,
         bottomRight: CGPoint,
         size: Int
-    ) -> CGImage? {
+    ) -> CIImage? {
         guard let filter = CIFilter(name: "CIPerspectiveCorrection") else { return nil }
         filter.setValue(image, forKey: kCIInputImageKey)
         filter.setValue(CIVector(cgPoint: topLeft), forKey: "inputTopLeft")
@@ -265,21 +367,12 @@ struct BoardSnapshotExporter {
         let extent = output.extent
         guard extent.width > 0, extent.height > 0 else { return nil }
 
-        let scaled = output.transformed(
+        return output.transformed(
             by: CGAffineTransform(
                 scaleX: CGFloat(size) / extent.width,
                 y: CGFloat(size) / extent.height
             )
         )
-        // CI 的 extent 常带浮点误差（例如 128.00000000000003），
-        // createCGImage 会向上取整成 129px；显式裁到整数尺寸保证训练输入一致。
-        let target = CGRect(
-            x: scaled.extent.minX,
-            y: scaled.extent.minY,
-            width: CGFloat(size),
-            height: CGFloat(size)
-        )
-        return ciContext.createCGImage(scaled, from: target)
     }
 
     private static func writePNG(_ image: CIImage, to url: URL) throws {
