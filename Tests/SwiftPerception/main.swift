@@ -2022,6 +2022,169 @@ func testEpisodeRecorder() {
     }
 }
 
+// MARK: - EpisodeObservation
+
+func testEpisodeObservation() {
+    print("EpisodeObservation")
+
+    func cell(
+        _ i: Int,
+        _ state: CellState,
+        _ color: PieceColor? = nil,
+        _ piece: String? = nil
+    ) -> GameCell {
+        GameCell(i: i, state: state, color: color, piece: piece, confidence: 0.99)
+    }
+
+    func state(
+        _ overrides: [Int: GameCell],
+        turn: PieceColor = .red,
+        phase: GamePhase = .playing
+    ) -> GameState {
+        var cells = (0..<60).map { cell($0, .empty) }
+        for (index, value) in overrides {
+            cells[index] = value
+        }
+        return GameState(
+            phase: phase,
+            board: GameBoard(rows: 5, cols: 12, cells: cells),
+            turn: turn,
+            selected: nil,
+            legalActions: [],
+            timers: nil,
+            lastMove: nil
+        )
+    }
+
+    let empty = state([:])
+    check(
+        EpisodeTransitionInference.infer(
+            from: state([5: cell(5, .hidden)]),
+            to: state([5: cell(5, .revealed, .red, "engineer")])
+        ) == .recorded(.flip(cell: 5)),
+        "单格 hidden → revealed 推断为翻牌"
+    )
+    check(
+        EpisodeTransitionInference.infer(from: empty, to: state([:], turn: .black))
+            == .unchanged,
+        "只换轮次不算动作"
+    )
+    check(
+        EpisodeTransitionInference.infer(
+            from: state([5: cell(5, .revealed, .red, "engineer")]),
+            to: state([
+                5: cell(5, .empty),
+                6: cell(6, .revealed, .red, "engineer"),
+            ])
+        ) == .recorded(.move(from: 5, to: 6)),
+        "走到空格推断为移动"
+    )
+    check(
+        EpisodeTransitionInference.infer(
+            from: state([
+                5: cell(5, .revealed, .red, "engineer"),
+                6: cell(6, .revealed, .black, "platoon_commander"),
+            ]),
+            to: state([
+                5: cell(5, .empty),
+                6: cell(6, .revealed, .red, "engineer"),
+            ])
+        ) == .recorded(.move(from: 5, to: 6)),
+        "吃子获胜推断为移动"
+    )
+    check(
+        EpisodeTransitionInference.infer(
+            from: state([
+                5: cell(5, .revealed, .red, "engineer"),
+                6: cell(6, .hidden),
+            ]),
+            to: state([
+                5: cell(5, .empty),
+                6: cell(6, .revealed, .black, "commander"),
+            ])
+        ) == .recorded(.move(from: 5, to: 6)),
+        "攻击暗子阵亡仍能定位目标"
+    )
+    check(
+        EpisodeTransitionInference.infer(
+            from: state([
+                5: cell(5, .revealed, .red, "engineer"),
+                6: cell(6, .revealed, .black, "bomb"),
+            ]),
+            to: state([5: cell(5, .empty), 6: cell(6, .empty)])
+        ) == .recorded(.move(from: 5, to: 6)),
+        "同归于尽按轮次颜色还原方向"
+    )
+    check(
+        EpisodeTransitionInference.infer(
+            from: state([
+                5: cell(5, .revealed, .red, "engineer"),
+                6: cell(6, .revealed, .black, "platoon_commander"),
+            ]),
+            to: state([
+                5: cell(5, .empty),
+                6: cell(6, .empty),
+                7: cell(7, .revealed, .red, "engineer"),
+            ])
+        ).isAmbiguous,
+        "同时出现离场/到达/清空判为无法解释"
+    )
+    check(
+        EpisodeTransitionInference.infer(
+            from: empty,
+            to: state([9: cell(9, .unknown)])
+        ) == .unstable,
+        "存在未识别格子时不比对"
+    )
+    check(
+        EpisodeTransitionInference.infer(
+            from: empty,
+            to: state([:], phase: .result)
+        ) == .unchanged,
+        "结算页不产生动作"
+    )
+
+    // 端到端：旁观录制一翻一走，states 仍满足 actions + 1。
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory
+        .appendingPathComponent("ttj-observe-\(UUID().uuidString)", isDirectory: true)
+    defer { try? fm.removeItem(at: root) }
+    let recorder = EpisodeRecorder(storage: StorageKit(rootURL: root))
+    do {
+        let start = state([5: cell(5, .hidden)])
+        try recorder.start(initialState: start, episodeID: "observe")
+        check(recorder.recordMode == .observation, "默认旁观模式")
+        _ = try recorder.observe(start)
+        _ = try recorder.observe(state([5: cell(5, .revealed, .red, "engineer")]))
+        _ = try recorder.observe(state([
+            5: cell(5, .empty),
+            6: cell(6, .revealed, .red, "engineer"),
+        ]))
+        let directory = try recorder.finish(finalState: nil, result: .win)
+        let states = readJSONLines(directory.appendingPathComponent("states.jsonl"))
+        let actions = readJSONLines(directory.appendingPathComponent("actions.jsonl"))
+        check(actions.count == 3, "一翻一走写 3 次点击")
+        check(states.count == actions.count + 1, "states = actions + 1")
+        check(actions[0]["cell"] as? Int == 5, "翻牌点第 5 格")
+        check(actions[1]["cell"] as? Int == 5, "走棋先点源格")
+        check(actions[2]["cell"] as? Int == 6, "走棋再点目标格")
+        check(states[2]["selected"] as? Int == 5, "第二次点击前已选中源格")
+        let meta = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: directory.appendingPathComponent("meta.json"))
+        ) as? [String: Any] ?? [:]
+        check(meta["moves"] as? Int == 3, "meta.moves 记录点击数")
+    } catch {
+        check(false, "旁观录制失败：\(error)")
+    }
+}
+
+extension EpisodeObservation {
+    var isAmbiguous: Bool {
+        if case .ambiguous = self { return true }
+        return false
+    }
+}
+
 // MARK: - Main
 
 testPieceCatalog()
@@ -2053,6 +2216,7 @@ testBoardChangeDetector()
 testBoardCellDeltas()
 testAutoSampleTracker()
 testEpisodeRecorder()
+testEpisodeObservation()
 testPerfKit()
 
 if failures > 0 {

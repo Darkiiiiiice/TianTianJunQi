@@ -98,6 +98,7 @@ final class BoardTapService {
         if result.isConfirmed,
            let recorder,
            recorder.isRecording,
+           recorder.recordMode == .panel,
            let beforeState
         {
             let afterState = perception.gameState

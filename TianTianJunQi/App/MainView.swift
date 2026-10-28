@@ -132,6 +132,55 @@ struct MainView: View {
                 cols: gameProfile.board.cols
             )
         }
+        .task {
+            await runRecordingObserver()
+        }
+    }
+
+    /// M2-7 观察模式：录制期间轮询稳定棋盘，用差分反推真实动作。
+    ///
+    /// 用独立循环而不是 `onChange(of: gameState)`，避免 10Hz 重绘整个窗口；
+    /// 也不用 `.task(id: isRecording)`，否则切分/收尾改变 isRecording 会打断循环。
+    private func runRecordingObserver() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(120))
+            guard recorder.isRecording,
+                  recorder.recordMode == .observation,
+                  let state = perception.gameState
+            else { continue }
+            do {
+                if case .ambiguous(let reason) = try recorder.observe(state) {
+                    splitEpisode(reason: reason, observed: state)
+                }
+            } catch {
+                store.note("episode 观察失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// 旁观录制遇到无法唯一解释的棋盘变化：结束本段并立即从当前局面重开，
+    /// 保证 `states` 与 `actions` 的对齐关系不被跳过动作破坏。
+    private func splitEpisode(reason: String, observed: GameState) {
+        let previousID = recorder.episodeID ?? "?"
+        do {
+            if recorder.actionCount == 0 {
+                // 刚开段就遇到无法解释的变化：直接丢掉空段，不留垃圾 episode。
+                recorder.cancel()
+            } else {
+                _ = try recorder.finish(
+                    finalState: recorder.baselineState,
+                    result: .error
+                )
+            }
+            try recorder.start(initialState: observed)
+            store.note(
+                "对局切分：\(reason)；上一段 \(previousID) 记为 error，"
+                    + "新段 \(recorder.episodeID ?? "")"
+            )
+        } catch {
+            store.note("对局切分失败：\(error.localizedDescription)")
+            recorder.cancel(removeDirectory: false)
+        }
     }
 
     /// M0-10：启动即建 Application Support 目录布局，并确保 `game-profile.json` 存在。

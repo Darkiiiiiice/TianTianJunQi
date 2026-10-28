@@ -181,7 +181,125 @@ def test_swift_style_two_tap_move_episode(
     report = inspect_path(target)
     assert report.ok, report.errors
     assert report.plies == len(taps)
-    assert any("无法解析" in message for message in report.warnings)
+    # 走棋的第一下是“选中源格”，不是独立动作，不应产生告警。
+    assert not report.warnings
+
+
+def _blank_state(turn: str = "red", phase: str = "playing") -> dict:
+    return {
+        "schema": 1,
+        "phase": phase,
+        "board": {
+            "rows": 5,
+            "cols": 12,
+            "cells": [{"i": index, "state": "empty"} for index in range(60)],
+        },
+        "turn": turn,
+        "selected": None,
+        "legal_actions": [],
+        "timers": None,
+        "last_move": None,
+    }
+
+
+def _set_revealed(state: dict, cell: int, color: str, piece: str) -> None:
+    state["board"]["cells"][cell] = {
+        "i": cell,
+        "state": "revealed",
+        "color": color,
+        "piece": piece,
+        "confidence": 0.99,
+    }
+
+
+def _set_hidden(state: dict, cell: int) -> None:
+    state["board"]["cells"][cell] = {
+        "i": cell,
+        "state": "hidden",
+        "confidence": 0.99,
+    }
+
+
+def _write_observed_episode(
+    target: Path, states: list[dict], taps: list[int]
+) -> None:
+    target.mkdir()
+    meta = {
+        "id": target.name,
+        "mode": "翻翻棋",
+        "startedAt": "2026-10-28T00:00:00Z",
+        "duration": 1.0,
+        "moves": len(taps),
+        "result": "win",
+        "score": 1,
+    }
+    (target / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    _write_jsonl(target / "states.jsonl", states)
+    _write_jsonl(
+        target / "actions.jsonl",
+        [{"type": "tap_cell", "cell": cell} for cell in taps],
+    )
+
+
+def test_observation_mode_episode_shapes(tmp_path: Path) -> None:
+    """旁观录制（差分推断）产出的 tap_cell 序列必须可回放校验。"""
+    # 1) 翻牌 + 走到空格。
+    start = _blank_state()
+    _set_hidden(start, 5)
+    flipped = _blank_state()
+    _set_revealed(flipped, 5, "red", "engineer")
+    selected = json.loads(json.dumps(flipped))
+    selected["selected"] = 5
+    moved = json.loads(json.dumps(selected))
+    moved["selected"] = None
+    moved["board"]["cells"][5] = {
+        "i": 5,
+        "state": "empty",
+        "color": None,
+        "piece": None,
+        "confidence": 0.99,
+    }
+    _set_revealed(moved, 6, "red", "engineer")
+    _write_observed_episode(
+        tmp_path / "flip-move",
+        [start, flipped, selected, moved],
+        [5, 5, 6],
+    )
+    report = inspect_path(tmp_path / "flip-move")
+    assert report.ok, report.errors
+    assert not report.warnings
+    assert report.plies == 3
+
+    # 2) 同归于尽：两格都清空。
+    both_die_start = _blank_state()
+    _set_revealed(both_die_start, 5, "red", "engineer")
+    _set_revealed(both_die_start, 6, "black", "bomb")
+    both_die_selected = json.loads(json.dumps(both_die_start))
+    both_die_selected["selected"] = 5
+    both_die_after = _blank_state()
+    _write_observed_episode(
+        tmp_path / "both-die",
+        [both_die_start, both_die_selected, both_die_after],
+        [5, 6],
+    )
+    report = inspect_path(tmp_path / "both-die")
+    assert report.ok, report.errors
+
+    # 3) 攻击暗子阵亡：源格清空、目标格翻开。
+    ambush_start = _blank_state()
+    _set_revealed(ambush_start, 5, "red", "engineer")
+    _set_hidden(ambush_start, 6)
+    ambush_selected = json.loads(json.dumps(ambush_start))
+    ambush_selected["selected"] = 5
+    ambush_after = _blank_state()
+    _set_revealed(ambush_after, 6, "black", "commander")
+    _write_observed_episode(
+        tmp_path / "ambush",
+        [ambush_start, ambush_selected, ambush_after],
+        [5, 6],
+    )
+    report = inspect_path(tmp_path / "ambush")
+    assert report.ok, report.errors
 
 
 def test_recorded_episode_skips_selection_taps(

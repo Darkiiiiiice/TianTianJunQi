@@ -38,6 +38,23 @@ struct EpisodeReward: Codable, Equatable, Sendable {
     var rewards: [String: Double]
 }
 
+/// 录制方式。
+///
+/// - `observation`：旁观手动对局——只在感知里看棋盘，用相邻两帧差分反推动作，
+///   不需要输入监控权限，用户正常在游戏窗口里下棋即可；
+/// - `panel`：记录本面板点出来的动作（坐标/动作已知，精度更高，用于自动对局）。
+enum EpisodeRecordMode: String, CaseIterable, Equatable, Sendable {
+    case observation
+    case panel
+
+    var label: String {
+        switch self {
+        case .observation: "旁观手动"
+        case .panel: "面板点击"
+        }
+    }
+}
+
 enum EpisodeRecorderError: LocalizedError {
     case notRecording
     case missingInitialState
@@ -72,6 +89,8 @@ final class EpisodeRecorder {
     private(set) var actionCount = 0
     private(set) var lastError: String?
     private(set) var isRecording = false
+    /// 录制方式可随时切换；录制进行中变更只影响之后的行为。
+    var recordMode: EpisodeRecordMode = .observation
 
     @ObservationIgnored private let storage: StorageKit
     @ObservationIgnored private let mode: String
@@ -82,11 +101,17 @@ final class EpisodeRecorder {
     /// 最近一次动作后的棋盘；结算页 `perception.gameState` 可能已被清空，
     /// 用它兜底写终局，避免留下没有 meta 的半成品 episode。
     @ObservationIgnored private var lastKnownState: GameState?
+    /// 旁观录制用来做差分的基线：最后一次已经成功写入 episode 的棋盘。
+    @ObservationIgnored private var observationBaseline: GameState?
+
+    /// 旁观录制切分时的“上一段结束局面”：必须是最后一段已确认的棋盘，
+    /// 不能是含未记录动作的新状态。
+    var baselineState: GameState? { observationBaseline }
 
     var statusText: String {
         if let lastError { return "录制失败：\(lastError)" }
         guard isRecording else { return "未录制" }
-        return "录制中 · \(actionCount) 次点击 · \(episodeID ?? "")"
+        return "录制中（\(recordMode.label)）· \(actionCount) 次点击 · \(episodeID ?? "")"
     }
 
     init(storage: StorageKit = StorageKit(), mode: String = "翻翻棋") {
@@ -140,6 +165,7 @@ final class EpisodeRecorder {
         self.startedAt = startedAt
         self.initialState = initialState
         self.lastKnownState = initialState
+        self.observationBaseline = initialState
         self.actionCount = 0
         self.isRecording = true
     }
@@ -176,6 +202,51 @@ final class EpisodeRecorder {
         try writeState(selected)
         try append(EpisodeTap(cell: to))
         lastKnownState = afterState ?? selected
+    }
+
+    /// 旁观录制：喂入最新稳定棋盘，自动差分并写出推断出的动作。
+    ///
+    /// 只有 `recordMode == .observation` 且棋盘处于进行中才工作；
+    /// 返回 `.ambiguous` 时调用方应结束本段并从 `state` 重新开始。
+    @discardableResult
+    func observe(_ state: GameState) throws -> EpisodeObservation {
+        guard isRecording, recordMode == .observation else { return .unchanged }
+        guard state.phase == .playing else { return .unchanged }
+        guard let baseline = observationBaseline else {
+            observationBaseline = state
+            lastKnownState = state
+            return .unchanged
+        }
+
+        let outcome = EpisodeTransitionInference.infer(from: baseline, to: state)
+        switch outcome {
+        case .recorded(let action):
+            try writeInferred(action, before: baseline, after: state)
+            observationBaseline = state
+            lastKnownState = state
+        case .unstable:
+            // 还没写出任何动作时，直接换基线是安全的（没有历史需要对齐）。
+            if actionCount == 0 {
+                observationBaseline = state
+                lastKnownState = state
+            }
+        case .ambiguous, .unchanged:
+            break
+        }
+        return outcome
+    }
+
+    private func writeInferred(
+        _ action: EpisodeInferredAction,
+        before: GameState,
+        after: GameState
+    ) throws {
+        switch action {
+        case .flip(let cell):
+            try recordFlip(cell: cell, state: before, afterState: after)
+        case .move(let from, let to):
+            try recordMove(from: from, to: to, state: before, afterState: after)
+        }
     }
 
     /// 结束并写 meta/reward；`finalState` 是终局棋盘（结果页仍可读）。
@@ -233,6 +304,7 @@ final class EpisodeRecorder {
         actionCount = 0
         initialState = nil
         lastKnownState = nil
+        observationBaseline = nil
     }
 
     // MARK: - 写盘
@@ -266,6 +338,7 @@ final class EpisodeRecorder {
         statesHandle = nil
         actionsHandle = nil
         isRecording = false
+        observationBaseline = nil
     }
 
     private func writeJSON<T: Encodable>(_ value: T, to url: URL) throws {

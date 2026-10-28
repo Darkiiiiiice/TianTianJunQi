@@ -201,6 +201,12 @@ def _infer_action(before: dict, action: dict) -> dict | None:
             return {"kind": "move", "from": source, "to": cell, "cell": cell}
         if target.get("state") == "hidden":
             return {"kind": "flip", "cell": cell}
+        if (
+            target.get("state") == "revealed"
+            and target.get("color") == before.get("turn")
+        ):
+            # 面板/人类录制里“点一下己方明子”只是选中，不改变棋盘。
+            return {"kind": "selection", "cell": cell}
         return None
     return None
 
@@ -528,6 +534,9 @@ def validate_episode(
         parsed = _infer_action(before, action)
         if parsed is None:
             report.warn(f"动作 {index + 1} 无法解析，跳过：{action}")
+            continue
+        if parsed.get("kind") == "selection":
+            # 走棋的第一下（选中源格）不是独立动作，状态也不变。
             continue
         if after is None:
             report.warn(f"动作 {index + 1} 没有后续状态，跳过转移校验")

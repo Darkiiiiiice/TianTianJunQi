@@ -27,6 +27,7 @@ swiftc \
   "$ROOT/TianTianJunQi/Perception/ScreenState.swift" \
   "$ROOT/TianTianJunQi/Perception/SnapshotLibrary.swift" \
   "$ROOT/TianTianJunQi/Runtime/CaptureFrame.swift" \
+  "$ROOT/TianTianJunQi/Storage/EpisodeObservation.swift" \
   "$ROOT/TianTianJunQi/Storage/EpisodeRecorder.swift" \
   "$ROOT/TianTianJunQi/Storage/StorageKit.swift" \
   "$ROOT/Tests/SwiftPerception/main.swift" \

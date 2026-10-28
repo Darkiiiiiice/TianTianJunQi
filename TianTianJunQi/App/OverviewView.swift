@@ -643,6 +643,23 @@ struct OverviewView: View {
                     )
                     .lineLimit(1)
 
+                Picker(
+                    "",
+                    selection: Binding(
+                        get: { recorder.recordMode },
+                        set: { recorder.recordMode = $0 }
+                    )
+                ) {
+                    ForEach(EpisodeRecordMode.allCases, id: \.self) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 140)
+                .disabled(recorder.isRecording)
+                .help("旁观手动：差分推断你手动下的棋；面板点击：记录本面板发出的点击")
+
                 Spacer(minLength: 0)
 
                 Button("打开目录") {
@@ -676,9 +693,14 @@ struct OverviewView: View {
     private func stopRecording() {
         guard recorder.isRecording else { return }
         let result = screenState.inferredEpisodeResult ?? .error
+        // 旁观模式只用“最后一个已确认动作后的棋盘”收尾：结果页 / 停止瞬间的
+        // 新感知可能已经含未记录的动作，直接写会破坏动作与状态的配对。
+        let finalState = recorder.recordMode == .observation
+            ? nil
+            : perception.gameState
         do {
             let directory = try recorder.finish(
-                finalState: perception.gameState,
+                finalState: finalState,
                 result: result
             )
             store.note("episode 已保存：\(directory.path)（\(result.rawValue)）")
