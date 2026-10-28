@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import CoreVideo
 import Foundation
 import ImageIO
@@ -31,6 +32,10 @@ func testBoardGeometry() {
         bottomLeft: CGPoint(x: 0.1, y: 0.9)
     )
     check(square.isValid, "正方形四边形有效")
+    check(
+        almost(square.physicalAspect(imageAspect: 1.5), 1.5, 1e-5),
+        "物理宽高比按画面比例换算"
+    )
 
     guard let grid = BoardGrid(quad: square, rows: 5, cols: 12) else {
         check(false, "5×12 格点初始化")
@@ -65,6 +70,50 @@ func testBoardGeometry() {
     for (index, center) in perspectiveGrid.cellCenters.enumerated() {
         check(perspectiveGrid.cellIndex(at: center) == index, "透视格点反查 \(index)")
     }
+
+    // 非均匀列中心：中间有一个比普通列距宽得多的河道。
+    let unevenCenters: [CGFloat] = [
+        0.03, 0.11, 0.19, 0.27, 0.35, 0.43,
+        0.49, 0.63, 0.71, 0.79, 0.87, 0.95,
+    ]
+    guard let unevenGrid = BoardGrid(
+        quad: square,
+        rows: 5,
+        cols: 12,
+        columnCenters: unevenCenters
+    ) else {
+        check(false, "非均匀格点初始化")
+        return
+    }
+    check(unevenGrid.columnCenters == unevenCenters, "保留非均匀列中心")
+    for (index, center) in unevenGrid.cellCenters.enumerated() {
+        check(unevenGrid.cellIndex(at: center) == index, "非均匀格点反查 \(index)")
+    }
+    check(
+        almost(unevenGrid.cellCenters[6].x, 0.1 + 0.49 * 0.8, 1e-5),
+        "河道旁的格心仍落在中心线上"
+    )
+    let channel = unevenGrid.cellRect(row: 0, col: 6)
+    check(
+        almost((channel.u0 + channel.u1) / 2, 0.49, 1e-5),
+        "训练格子以中心线为正中"
+    )
+    check(
+        almost(channel.u1 - channel.u0, 0.06, 1e-5),
+        "训练格子宽度取较窄的相邻列距"
+    )
+
+    let fallback = BoardGrid(
+        quad: square,
+        rows: 5,
+        cols: 12,
+        columnCenters: [0.5]
+    )
+    check(
+        almost(fallback?.columnCenters[0] ?? 0, 0.5 / 12, 1e-5),
+        "长度不符的中心线退回均分"
+    )
+
     check(perspectiveGrid.cellIndex(at: CGPoint(x: 0.01, y: 0.01)) == nil, "棋盘外返回 nil")
     check(
         BoardGrid(
@@ -73,6 +122,141 @@ func testBoardGeometry() {
             cols: 12
         ) == nil,
         "退化四边形被拒绝"
+    )
+}
+
+// MARK: - BoardMask
+
+func testBoardMask() {
+    print("BoardMask")
+    let aspect: CGFloat = 1.54
+    let rows = 5
+    let cols = 12
+
+    // 均分起点：中心线落在每格正中。
+    let base = BoardMask(
+        rect: CGRect(x: 0.1, y: 0.2, width: 0.8, height: 0.4),
+        rows: rows,
+        cols: cols
+    )
+    check(base.columnCenters.count == cols, "生成 12 条列中心线")
+    check(base.rowCenters.count == rows, "生成 5 条行中心线")
+    check(almost(base.columnCenters[0], 0.1 + 0.8 / 24), "首列中心 X")
+    check(almost(base.rowCenters[0], 0.2 + 0.4 / 10), "首行中心 Y")
+
+    // 外框与格子边界全部由中心线推导。
+    let rect = base.rect
+    check(almost(rect.minX, 0.1) && almost(rect.maxX, 0.9), "外框左右贴住最外侧中心线")
+    check(almost(rect.minY, 0.2) && almost(rect.maxY, 0.6), "外框上下贴住最外侧中心线")
+    check(almost(base.columnBounds(0).lowerBound, 0.1), "首列裁剪左边界")
+    check(almost(base.columnBounds(cols - 1).upperBound, 0.9), "末列裁剪右边界")
+    check(almost(base.rowBounds(0).lowerBound, 0.2), "首行裁剪上边界")
+    check(almost(base.rowBounds(rows - 1).upperBound, 0.6), "末行裁剪下边界")
+    check(
+        almost(base.physicalAspect(imageAspect: aspect), 0.8 * aspect / 0.4, 1e-5),
+        "物理宽高比按画面比例换算"
+    )
+
+    guard let grid = base.grid() else {
+        check(false, "遮罩生成格点")
+        return
+    }
+    check(grid.cellCenters.count == 60, "生成 60 个格心")
+    check(almost(grid.cellCenters[0].x, base.columnCenters[0], 1e-5), "格心 X 与中心线一致")
+    check(almost(grid.cellCenters[0].y, base.rowCenters[0], 1e-5), "格心 Y 与中心线一致")
+    check(grid.cellIndex(at: grid.cellCenters[59]) == 59, "末格反查正确")
+
+    // 只动第 7 列：其它列不受影响，格子允许非均匀。
+    let shifted = base.settingColumnCenter(6, to: 0.56)
+    check(almost(shifted.columnCenters[6], 0.56), "第 7 列中心线移动")
+    for index in 0..<cols where index != 6 {
+        check(
+            almost(shifted.columnCenters[index], base.columnCenters[index]),
+            "第 \(index + 1) 列不受影响"
+        )
+    }
+    check(shifted.columnBounds(6) != base.columnBounds(6), "移动列中心后裁剪范围跟随")
+    guard let shiftedGrid = shifted.grid() else {
+        check(false, "非均匀遮罩生成格点")
+        return
+    }
+    for row in 0..<rows {
+        for col in 0..<cols {
+            let index = row * cols + col
+            check(
+                shiftedGrid.cellIndex(at: shiftedGrid.cellCenters[index]) == index,
+                "非均匀格点反查 (\(row),\(col))"
+            )
+        }
+    }
+    check(
+        almost(shiftedGrid.cellCenters[6].x, 0.56, 1e-5),
+        "移动后的列中心仍落在黄点上"
+    )
+
+    // 相邻中心线不能穿过彼此。
+    let pushedRight = base.settingColumnCenter(5, to: 0.99)
+    check(pushedRight.columnCenters[5] < pushedRight.columnCenters[6], "列中心线不会越过右邻居")
+    let pushedLeft = base.settingColumnCenter(6, to: 0.0)
+    check(pushedLeft.columnCenters[6] > pushedLeft.columnCenters[5], "列中心线不会越过左邻居")
+
+    // 行中心线独立于列。
+    let rowShifted = base.settingRowCenter(2, to: 0.45)
+    check(almost(rowShifted.rowCenters[2], 0.45), "第 3 行中心线移动")
+    check(almost(rowShifted.columnCenters[3], base.columnCenters[3]), "移行不影响列")
+
+    // 均分按钮保留首尾中心线。
+    let uneven = base.settingColumnCenter(2, to: 0.3)
+    let uniform = uneven.uniformizedColumns()
+    check(almost(uniform.columnCenters.first!, base.columnCenters.first!), "列均分保留首列")
+    check(almost(uniform.columnCenters.last!, base.columnCenters.last!), "列均分保留末列")
+
+    let anchor = CGPoint(x: 0.5, y: 0.4)
+    let zoomed = base.zoomed(by: 1.1, anchor: anchor)
+    check(zoomed.rect.width > base.rect.width, "放大增加外框宽度")
+    check(
+        almost(
+            zoomed.physicalAspect(imageAspect: aspect),
+            base.physicalAspect(imageAspect: aspect),
+            1e-5
+        ),
+        "缩放不改变物理宽高比"
+    )
+
+    let moved = base.moved(by: CGSize(width: 0.05, height: -0.03))
+    check(
+        almost(moved.center.x, 0.55) && almost(moved.center.y, 0.37, 1e-5),
+        "平移更新中心"
+    )
+
+    let edge = BoardMask(
+        rect: CGRect(x: 0.9, y: 0.95, width: 0.4, height: 0.3),
+        rows: rows,
+        cols: cols
+    ).clamped()
+    check(
+        edge.columnCenters.allSatisfy { $0 >= -1e-6 && $0 <= 1 + 1e-6 },
+        "列中心线夹在画面内"
+    )
+    check(
+        edge.rowCenters.allSatisfy { $0 >= -1e-6 && $0 <= 1 + 1e-6 },
+        "行中心线夹在画面内"
+    )
+
+    let detected = BoardQuad(
+        topLeft: CGPoint(x: 0.1, y: 0.2),
+        topRight: CGPoint(x: 0.9, y: 0.2),
+        bottomRight: CGPoint(x: 0.9, y: 0.7),
+        bottomLeft: CGPoint(x: 0.1, y: 0.7)
+    )
+    let fitted = BoardMask.fitting(detected, rows: rows, cols: cols)
+    check(
+        almost(fitted.center.x, 0.5) && almost(fitted.center.y, 0.45),
+        "自动对齐取检测框中心"
+    )
+    check(
+        almost(fitted.rect.width, 0.8) && almost(fitted.rect.height, 0.5),
+        "自动对齐取检测框外接矩形"
     )
 }
 
@@ -254,7 +438,8 @@ func testSnapshotLibrary() {
             frame: frame,
             grid: grid,
             windowSize: CGSize(width: 640, height: 400),
-            theme: "test"
+            theme: "test",
+            origin: "auto"
         )
 
         let library = SnapshotLibrary(rootURL: root)
@@ -267,9 +452,11 @@ func testSnapshotLibrary() {
         check(summary.isValidManifest, "meta.json 可读")
         check(summary.rows == 5 && summary.cols == 12, "快照行列正确")
         check(summary.cellCount == 60, "快照格数正确")
+        check(summary.isAutoSampled, "快照来源为自动采样")
 
         let manifest = try library.loadManifest(summary)
         check(manifest.cells.count == 60, "meta 包含 60 格")
+        check(manifest.origin == "auto", "meta 记录采集来源")
         check(fileManager.fileExists(atPath: root.path), "样本根目录存在")
 
         guard var labels = SnapshotLabels(manifest: manifest, snapshot: summary.id) else {
@@ -347,15 +534,1121 @@ func testSnapshotLibrary() {
     }
 }
 
+// MARK: - AutoLabel
+
+func testAutoLabelVote() {
+    print("AutoLabelVote")
+    let votes: [(label: String, distance: Float)] = [
+        ("连长", 0.1), ("连长", 0.2), ("排长", 0.3), ("连长", 0.15), ("连长", 0.05),
+    ]
+    check(AutoLabelVote.winner(votes, k: 5, minVotes: 4)?.label == "连长", "5 票中 4 票当选")
+    check(AutoLabelVote.winner(votes, k: 5, minVotes: 5) == nil, "票数不足返回 nil")
+
+    let scattered: [(label: String, distance: Float)] = [
+        ("司令", 0.1), ("军长", 0.2), ("师长", 0.3), ("旅长", 0.4), ("团长", 0.5),
+    ]
+    check(AutoLabelVote.winner(scattered, k: 5, minVotes: 2) == nil, "没有多数时返回 nil")
+    check(AutoLabelVote.winner([("空", 0.1)], k: 5, minVotes: 4) == nil, "候选少于 minVotes 返回 nil")
+
+    let long: [(label: String, distance: Float)] = [
+        ("暗子", 0.1), ("暗子", 0.2), ("暗子", 0.3), ("暗子", 0.4),
+        ("明子", 0.5), ("明子", 0.6),
+    ]
+    check(AutoLabelVote.winner(long, k: 4, minVotes: 4)?.label == "暗子", "只统计最近 k 个候选")
+
+    // 棋子判定：冷门棋子凑不满 4/5 票，靠「3 票 + 明显领先」放行。
+    let rare: [(label: String, distance: Float)] = [
+        ("司令", 0.25), ("司令", 0.37), ("司令", 0.39), ("团长", 0.65), ("团长", 0.66),
+    ]
+    check(AutoLabelVote.piece(rare)?.label == "司令", "3/5 票且明显领先时放行")
+    check(AutoLabelVote.winner(rare, k: 5, minVotes: 4) == nil, "同样的票数在严格规则下被挡")
+
+    let ambiguous: [(label: String, distance: Float)] = [
+        ("团长", 0.27), ("团长", 0.35), ("师长", 0.35), ("师长", 0.36), ("师长", 0.37),
+    ]
+    check(AutoLabelVote.piece(ambiguous) == nil, "票数接近时不猜")
+
+    // 同一张图换个格子出现：近邻距离接近 0，直接认。
+    let identical: [(label: String, distance: Float)] = [
+        ("军旗", 0.002), ("军长", 0.48), ("军长", 0.51), ("师长", 0.53), ("旅长", 0.60),
+    ]
+    check(AutoLabelVote.piece(identical)?.label == "军旗", "几乎同一张图时只看最近邻")
+
+    let conflicting: [(label: String, distance: Float)] = [
+        ("军长", 0.001), ("军旗", 0.04), ("军旗", 0.30), ("军旗", 0.32), ("军旗", 0.33),
+    ]
+    check(AutoLabelVote.piece(conflicting) == nil, "近邻互相打架时不填")
+
+    // 冷门棋子只凑到 2 票，但两张图都很近、第三名明显更远。
+    let rareTwo: [(label: String, distance: Float)] = [
+        ("司令", 0.31), ("司令", 0.31), ("工兵", 0.62), ("工兵", 0.63), ("军长", 0.63),
+    ]
+    check(AutoLabelVote.piece(rareTwo)?.label == "司令", "2 票但近且领先时放行")
+
+    // 同样 2 票，但最近邻本身就很远（0.45），不猜。
+    let rareFar: [(label: String, distance: Float)] = [
+        ("司令", 0.45), ("司令", 0.47), ("工兵", 0.70), ("工兵", 0.72), ("军长", 0.74),
+    ]
+    check(AutoLabelVote.piece(rareFar) == nil, "最近邻太远时不猜")
+}
+
+func testAutoLabelPersistence() {
+    print("AutoLabelPersistence")
+    var label = SnapshotCellLabel(index: 0, row: 0, col: 0)
+    label.applyAuto(state: .revealed, color: .red, piece: "司令")
+    check(label.auto == true, "自动标注打标记")
+    check(label.isComplete, "自动标注结果是完整标签")
+    label.confirm()
+    check(label.auto == nil, "确认后清除自动标记")
+
+    var labels = SnapshotLabels(rows: 1, cols: 1, snapshot: "s")
+    labels.update(index: 0) {
+        $0.applyAuto(state: .hidden, color: nil, piece: nil)
+    }
+    check(labels.autoCount == 1, "统计自动标注格数")
+    labels.confirmAllAuto()
+    check(labels.autoCount == 0, "全部确认后自动标记清零")
+    check(labels.cells[0].state == .hidden, "全部确认保留标签内容")
+
+    labels.update(index: 0) {
+        $0.applyAuto(state: .hidden, color: nil, piece: nil)
+    }
+    check(labels.autoCount == 1, "重新自动标注")
+    labels.clearAuto()
+    check(labels.cells[0].state == .unknown, "清除自动标注退回未标")
+    check(labels.autoCount == 0, "清除后计数归零")
+
+    // 旧 labels.json 没有 auto 字段，解码不应失败。
+    let legacy = """
+    {"version":1,"snapshot":"old","rows":1,"cols":1,
+     "updatedAt":"2026-10-26T00:00:00Z",
+     "cells":[{"index":0,"row":0,"col":0,"state":"hidden"}]}
+    """
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    if let old = try? decoder.decode(SnapshotLabels.self, from: Data(legacy.utf8)) {
+        check(old.cells[0].auto == nil, "旧标签解码后 auto 为 nil")
+        check(old.cells[0].state == .hidden, "旧标签状态保留")
+    } else {
+        check(false, "旧 labels.json 可解码")
+    }
+}
+
+// MARK: - BoardChangeDetector / AutoSampleTracker
+
+func makeFingerprint(
+    width: Int,
+    height: Int,
+    pixel: (Int, Int) -> (UInt8, UInt8, UInt8) = { _, _ in (16, 16, 16) }
+) -> BoardFingerprint {
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    for y in 0..<height {
+        for x in 0..<width {
+            let color = pixel(x, y)
+            let offset = (y * width + x) * 4
+            pixels[offset] = color.0
+            pixels[offset + 1] = color.1
+            pixels[offset + 2] = color.2
+            pixels[offset + 3] = 255
+        }
+    }
+    return BoardFingerprint(width: width, height: height, pixels: pixels)
+}
+
+func changingBlock(
+    _ fingerprint: BoardFingerprint,
+    x: Int,
+    y: Int,
+    size: Int,
+    value: UInt8 = 255
+) -> BoardFingerprint {
+    var pixels = fingerprint.pixels
+    for row in y..<min(fingerprint.height, y + size) {
+        for col in x..<min(fingerprint.width, x + size) {
+            let offset = (row * fingerprint.width + col) * 4
+            pixels[offset] = value
+            pixels[offset + 1] = value
+            pixels[offset + 2] = value
+        }
+    }
+    return BoardFingerprint(
+        width: fingerprint.width,
+        height: fingerprint.height,
+        pixels: pixels
+    )
+}
+
+func testBoardChangeDetector() {
+    print("BoardChangeDetector")
+    let full = [
+        CGPoint(x: 0, y: 0),
+        CGPoint(x: 1, y: 0),
+        CGPoint(x: 1, y: 1),
+        CGPoint(x: 0, y: 1),
+    ]
+    let base = makeFingerprint(width: 100, height: 50)
+    check(BoardChangeDetector.changedFraction(base, base, boardCorners: full) == 0, "同一画面变化为 0")
+
+    let block = changingBlock(base, x: 10, y: 10, size: 10)
+    let fraction = BoardChangeDetector.changedFraction(base, block, boardCorners: full)
+    check(fraction != nil && abs(fraction! - 0.02) < 0.0001, "棋盘内 10×10 变化记为 2%")
+
+    // 只有左半边算棋盘：右边 10×10 的变化不应计入。
+    let leftHalf = [
+        CGPoint(x: 0, y: 0),
+        CGPoint(x: 0.5, y: 0),
+        CGPoint(x: 0.5, y: 1),
+        CGPoint(x: 0, y: 1),
+    ]
+    let outsideBlock = changingBlock(base, x: 60, y: 10, size: 10)
+    check(
+        BoardChangeDetector.changedFraction(base, outsideBlock, boardCorners: leftHalf) == 0,
+        "棋盘外变化不计入"
+    )
+
+    // 单通道差值低于阈值视为噪声。
+    let tiny = changingBlock(base, x: 10, y: 10, size: 10, value: 30)
+    check(
+        BoardChangeDetector.changedFraction(base, tiny, boardCorners: full, pixelDelta: 20) == 0,
+        "低幅度噪声不计入变化"
+    )
+
+    let resized = makeFingerprint(width: 120, height: 50)
+    check(
+        BoardChangeDetector.changedFraction(base, resized, boardCorners: full) == nil,
+        "指纹尺寸不同返回 nil"
+    )
+
+    // 指纹方向：顶部红色必须落在数组第一行。
+    let side = 16
+    var raw = [UInt8](repeating: 0, count: side * side * 4)
+    func setPixel(_ x: Int, _ y: Int, _ color: (UInt8, UInt8, UInt8)) {
+        let offset = (y * side + x) * 4
+        raw[offset] = color.0
+        raw[offset + 1] = color.1
+        raw[offset + 2] = color.2
+        raw[offset + 3] = 255
+    }
+    for y in 0..<side {
+        for x in 0..<side {
+            let top = y < side / 2
+            let left = x < side / 2
+            if top && left {
+                setPixel(x, y, (255, 0, 0))       // 左上：红
+            } else if top {
+                setPixel(x, y, (0, 255, 0))       // 右上：绿
+            } else if left {
+                setPixel(x, y, (0, 0, 255))       // 左下：蓝
+            } else {
+                setPixel(x, y, (255, 255, 255))   // 右下：白
+            }
+        }
+    }
+    if let provider = CGDataProvider(data: Data(raw) as CFData),
+       let image = CGImage(
+           width: side,
+           height: side,
+           bitsPerComponent: 8,
+           bitsPerPixel: 32,
+           bytesPerRow: side * 4,
+           space: CGColorSpaceCreateDeviceRGB(),
+           bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+           provider: provider,
+           decode: nil,
+           shouldInterpolate: false,
+           intent: .defaultIntent
+       ),
+       let fingerprint = BoardChangeDetector.fingerprint(image: CIImage(cgImage: image), width: side) {
+        check(fingerprint.width == side && fingerprint.height == side, "指纹尺寸保持宽高比")
+        check(
+            fingerprint.pixels[0] > 200
+                && fingerprint.pixels[1] < 60
+                && fingerprint.pixels[2] < 60,
+            "指纹第一行对应图像顶部"
+        )
+        let bottomOffset = (side - 1) * side * 4
+        check(
+            fingerprint.pixels[bottomOffset] < 60
+                && fingerprint.pixels[bottomOffset + 2] > 200,
+            "指纹最后一行对应图像底部"
+        )
+    } else {
+        check(false, "构造方向测试图")
+    }
+}
+
+// MARK: - 逐格变化（自动采样判定）
+
+/// 测试棋盘：12 列 × 5 行，probe 240×120，每格 20×24 像素。
+let testCols = 12
+let testRows = 5
+let testProbeWidth = 240
+let testProbeHeight = 120
+
+func makeTestCellBoxes() -> [BoardCellBox] {
+    let rects = (0..<testRows).flatMap { row in
+        (0..<testCols).map { col in
+            CGRect(
+                x: CGFloat(col) / CGFloat(testCols),
+                y: CGFloat(row) / CGFloat(testRows),
+                width: 1 / CGFloat(testCols),
+                height: 1 / CGFloat(testRows)
+            )
+        }
+    }
+    return BoardCellBox.grid(
+        rows: testRows,
+        cols: testCols,
+        rects: rects,
+        probeWidth: testProbeWidth,
+        probeHeight: testProbeHeight
+    )
+}
+
+func testCell(_ boxes: [BoardCellBox], row: Int, col: Int) -> BoardCellBox? {
+    boxes.first { $0.row == row && $0.col == col }
+}
+
+func testDelta(_ deltas: [BoardCellDelta], row: Int, col: Int) -> BoardCellDelta? {
+    deltas.first { $0.row == row && $0.col == col }
+}
+
+/// 整格涂色：模拟翻棋/走子后整格换面。
+func fillingCell(
+    _ fingerprint: BoardFingerprint,
+    box: BoardCellBox,
+    value: UInt8 = 200
+) -> BoardFingerprint {
+    var pixels = fingerprint.pixels
+    let width = fingerprint.width
+    for y in box.y0..<box.y1 {
+        for x in box.x0..<box.x1 {
+            let offset = (y * width + x) * 4
+            pixels[offset] = value
+            pixels[offset + 1] = value
+            pixels[offset + 2] = value
+        }
+    }
+    return BoardFingerprint(
+        width: fingerprint.width,
+        height: fingerprint.height,
+        pixels: pixels
+    )
+}
+
+/// 只涂最外圈：模拟选中框/高光闪烁（占格约三成面积，颜色变化很小）。
+func outliningCell(
+    _ fingerprint: BoardFingerprint,
+    box: BoardCellBox,
+    thickness: Int,
+    value: UInt8 = 60
+) -> BoardFingerprint {
+    var pixels = fingerprint.pixels
+    let width = fingerprint.width
+    for y in box.y0..<box.y1 {
+        for x in box.x0..<box.x1 {
+            let isBorder = x < box.x0 + thickness || x >= box.x1 - thickness
+                || y < box.y0 + thickness || y >= box.y1 - thickness
+            guard isBorder else { continue }
+            let offset = (y * width + x) * 4
+            pixels[offset] = value
+            pixels[offset + 1] = value
+            pixels[offset + 2] = value
+        }
+    }
+    return BoardFingerprint(
+        width: fingerprint.width,
+        height: fingerprint.height,
+        pixels: pixels
+    )
+}
+
+/// 涂格子顶部 `fraction` 比例：模拟走法箭头/落点提示（只占格内一部分，但对比强）。
+func paintingBand(
+    _ fingerprint: BoardFingerprint,
+    box: BoardCellBox,
+    fraction: Double,
+    value: UInt8 = 220
+) -> BoardFingerprint {
+    var pixels = fingerprint.pixels
+    let width = fingerprint.width
+    let height = box.y1 - box.y0
+    let rows = min(height, max(1, Int((Double(height) * fraction).rounded())))
+    for y in box.y0..<(box.y0 + rows) {
+        for x in box.x0..<box.x1 {
+            let offset = (y * width + x) * 4
+            pixels[offset] = value
+            pixels[offset + 1] = value
+            pixels[offset + 2] = value
+        }
+    }
+    return BoardFingerprint(
+        width: fingerprint.width,
+        height: fingerprint.height,
+        pixels: pixels
+    )
+}
+
+func testBoardCellDeltas() {
+    print("BoardCellDeltas")
+    let base = makeFingerprint(width: testProbeWidth, height: testProbeHeight)
+    let boxes = makeTestCellBoxes()
+    check(boxes.count == testRows * testCols, "生成 60 个格子")
+
+    let empty = BoardChangeDetector.cellDeltas(base, base, boxes: boxes)
+    check(
+        empty.allSatisfy { $0.fraction == 0 && $0.meanDelta == 0 },
+        "同图逐格无变化"
+    )
+
+    // 整格换面（翻棋/走子落点）：占比 100%、平均差大。
+    guard let revealedCell = testCell(boxes, row: 2, col: 3) else {
+        check(false, "取到 (2,3) 格")
+        return
+    }
+    let revealed = fillingCell(base, box: revealedCell)
+    let revealedDeltas = BoardChangeDetector.cellDeltas(base, revealed, boxes: boxes)
+    if let delta = testDelta(revealedDeltas, row: 2, col: 3) {
+        check(delta.fraction > 0.99, "整格变化占比 ≈100%")
+        check(delta.meanDelta > 150, "整格变化平均差很大")
+        check(
+            delta.isPieceChange(minFraction: 0.55, minMeanDelta: 25),
+            "整格变化判为棋子变化"
+        )
+    } else {
+        check(false, "取到整格变化统计")
+    }
+    check(
+        revealedDeltas.filter { $0.fraction > 0.5 }.count == 1,
+        "只有被涂的那一格发生整格变化"
+    )
+
+    // 选中框闪烁：只覆盖格内三成面积、平均差很小。
+    guard let selectedCell = testCell(boxes, row: 4, col: 8) else {
+        check(false, "取到 (4,8) 格")
+        return
+    }
+    let ringed = outliningCell(base, box: selectedCell, thickness: 2)
+    let ringDeltas = BoardChangeDetector.cellDeltas(base, ringed, boxes: boxes)
+    if let delta = testDelta(ringDeltas, row: 4, col: 8) {
+        check(delta.fraction < 0.4, "选中框只覆盖格内一小部分")
+        check(delta.meanDelta < 25, "选中框平均差很小")
+        check(
+            !delta.isPieceChange(minFraction: 0.55, minMeanDelta: 25),
+            "选中框不算棋子变化"
+        )
+    } else {
+        check(false, "取到闪烁格统计")
+    }
+
+    // 走法箭头：三成面积、对比很强 —— 占比这一关必须挡住它。
+    guard let hintedCell = testCell(boxes, row: 1, col: 1) else {
+        check(false, "取到 (1,1) 格")
+        return
+    }
+    let hinted = paintingBand(base, box: hintedCell, fraction: 1.0 / 3.0)
+    let hintedDeltas = BoardChangeDetector.cellDeltas(base, hinted, boxes: boxes)
+    if let delta = testDelta(hintedDeltas, row: 1, col: 1) {
+        check(delta.fraction > 0.25 && delta.fraction < 0.45, "箭头只覆盖约三分之一格")
+        check(delta.meanDelta > 50, "箭头颜色对比很强")
+        check(
+            !delta.isPieceChange(minFraction: 0.55, minMeanDelta: 25),
+            "走法箭头不算棋子变化"
+        )
+    } else {
+        check(false, "取到箭头格统计")
+    }
+}
+
+func testAutoSampleTracker() {
+    print("BoardAutoSampleTracker")
+    let corners = [
+        CGPoint(x: 0, y: 0),
+        CGPoint(x: 1, y: 0),
+        CGPoint(x: 1, y: 1),
+        CGPoint(x: 0, y: 1),
+    ]
+    let base = makeFingerprint(width: testProbeWidth, height: testProbeHeight)
+    let boxes = makeTestCellBoxes()
+    guard let sourceCell = testCell(boxes, row: 1, col: 3),
+          let destinationCell = testCell(boxes, row: 3, col: 3),
+          let thirdCell = testCell(boxes, row: 0, col: 0)
+    else {
+        check(false, "取到测试格")
+        return
+    }
+
+    let moved = fillingCell(base, box: destinationCell)
+    let movedAgain = fillingCell(moved, box: sourceCell, value: 220)
+    let movedThird = fillingCell(movedAgain, box: thirdCell, value: 180)
+
+    var config = BoardAutoSamplerConfig()
+    config.settleDuration = 0.9
+    config.cooldown = 0.8
+    config.maxPerGame = 2
+    var tracker = BoardAutoSampleTracker(config: config)
+
+    func observe(_ probe: BoardFingerprint, _ time: TimeInterval) -> BoardAutoSampleTracker.Action {
+        tracker.observe(probe, cellBoxes: boxes, boardCorners: corners, at: time)
+    }
+
+    check(observe(base, 0) == .waiting, "首帧建立基线")
+    check(observe(base, 0.3) == .settling, "进入对局后先等静置")
+    check(observe(base, 1.0) == .unchanged, "静置后没有变化不采样")
+
+    // 选中框以约 2Hz 开关：整盘漂移约 0.5%，不能重置静置计时。
+    let blinkOn = outliningCell(base, box: sourceCell, thickness: 2)
+    check(observe(blinkOn, 1.2) == .unchanged, "闪烁不重置静置计时")
+    check(
+        observe(blinkOn, 1.95) == .unchanged,
+        "选中框闪烁不影响静置判定"
+    )
+    check(
+        observe(base, 2.1) == .unchanged,
+        "闪烁回落也不触发采样"
+    )
+
+    // 真走棋：落点整格换面 → 静置 + 连续两次一致后采样。
+    check(observe(moved, 2.2) == .settling, "检测到走棋，重新计时")
+    check(observe(moved, 2.6) == .settling, "静置时间不足不采样")
+    check(observe(moved, 3.2) == .settling, "静置后先记下变化签名")
+    if case .capture(let change) = observe(moved, 3.45) {
+        check(true, "连续两次一致后才采样")
+        check(change.changedCells == 1, "记录变化格数")
+        check(change.maxCellFraction > 0.9, "记录最大单格变化占比")
+    } else {
+        check(false, "连续两次一致后才采样")
+    }
+    tracker.recordCapture(moved, at: 3.45)
+    check(tracker.gameCaptureCount == 1, "采样计数 +1")
+
+    // 采样后落点棋子继续闪选中框：不能重复采样。
+    let blinkAfter = outliningCell(moved, box: destinationCell, thickness: 2)
+    check(observe(blinkAfter, 3.6) == .settling, "采样后闪烁进入静置")
+    check(observe(blinkAfter, 4.4) == .unchanged, "落点闪烁不重复采样")
+
+    // 下一次真走棋。
+    check(observe(movedAgain, 4.5) == .settling, "第二处变化进入静置")
+    check(observe(movedAgain, 5.5) == .settling, "第二处变化先记签名")
+    if case .capture = observe(movedAgain, 5.75) {
+        check(true, "冷却结束后的下一次变化继续采样")
+    } else {
+        check(false, "冷却结束后的下一次变化继续采样")
+    }
+    tracker.recordCapture(movedAgain, at: 5.75)
+
+    check(observe(movedThird, 5.9) == .settling, "第三处变化进入静置")
+    check(observe(movedThird, 6.9) == .limitReached, "达到单局上限后停止采样")
+
+    tracker.beginGame()
+    check(tracker.gameCaptureCount == 0, "新一局重置计数")
+    check(observe(base, 10) == .waiting, "新一局重新建立基线")
+
+    // 冷却期内的变化先返回 unchanged，冷却结束后同一局面可补采。
+    var slow = BoardAutoSamplerConfig()
+    slow.cooldown = 5
+    slow.settleDuration = 0.5
+    slow.maxPerGame = 10
+    var cooled = BoardAutoSampleTracker(config: slow)
+    func cooledObserve(
+        _ probe: BoardFingerprint,
+        _ time: TimeInterval
+    ) -> BoardAutoSampleTracker.Action {
+        cooled.observe(probe, cellBoxes: boxes, boardCorners: corners, at: time)
+    }
+    _ = cooledObserve(base, 0)
+    _ = cooledObserve(moved, 0.1)
+    _ = cooledObserve(moved, 0.7)
+    if case .capture = cooledObserve(moved, 0.8) {
+        check(true, "首次采样")
+    } else {
+        check(false, "首次采样")
+    }
+    cooled.recordCapture(moved, at: 0.8)
+    _ = cooledObserve(movedAgain, 0.9)
+    check(
+        cooledObserve(movedAgain, 1.6) == .unchanged,
+        "冷却期内不重复采样"
+    )
+    _ = cooledObserve(movedAgain, 5.8)
+    if case .capture = cooledObserve(movedAgain, 5.9) {
+        check(true, "冷却结束后补采同一局面")
+    } else {
+        check(false, "冷却结束后补采同一局面")
+    }
+
+    // 翻棋动画：第一次轮询只看到 50% 的变化，下一次才长到 58%。
+    // 占比在变但格集合不变，应该由第二次轮询确认后拍照。
+    let halfFlipped = paintingBand(base, box: destinationCell, fraction: 0.5)
+    let flipped = paintingBand(base, box: destinationCell, fraction: 0.58)
+    var flipConfig = BoardAutoSamplerConfig()
+    flipConfig.settleDuration = 0.5
+    flipConfig.cooldown = 0
+    var flip = BoardAutoSampleTracker(config: flipConfig)
+    func flipObserve(
+        _ probe: BoardFingerprint,
+        _ time: TimeInterval
+    ) -> BoardAutoSampleTracker.Action {
+        flip.observe(probe, cellBoxes: boxes, boardCorners: corners, at: time)
+    }
+    _ = flipObserve(base, 0)
+    _ = flipObserve(base, 0.6)
+    check(flipObserve(halfFlipped, 0.7) == .settling, "第一次看到变化先记下格")
+    if case .capture = flipObserve(flipped, 0.8) {
+        check(true, "同一格下一次仍在变化就拍照")
+    } else {
+        check(false, "同一格下一次仍在变化就拍照")
+    }
+
+    // 一次性动画（出现又消失）不该采样。
+    var transient = BoardAutoSampleTracker(config: flipConfig)
+    func transientObserve(
+        _ probe: BoardFingerprint,
+        _ time: TimeInterval
+    ) -> BoardAutoSampleTracker.Action {
+        transient.observe(probe, cellBoxes: boxes, boardCorners: corners, at: time)
+    }
+    _ = transientObserve(base, 0)
+    _ = transientObserve(base, 0.6)
+    if case .capture = transientObserve(moved, 0.7) {
+        check(false, "瞬时变化第一次不拍照")
+    } else {
+        check(true, "瞬时变化第一次不拍照")
+    }
+    check(transientObserve(base, 0.8) == .settling, "变化消失后重新静置")
+    check(transientObserve(base, 1.4) == .unchanged, "确认没有变化后不拍照")
+}
+
+// MARK: - PieceCatalog
+
+func testPieceCatalog() {
+    print("PieceCatalog")
+    let expected = [
+        "commander": "司令",
+        "army_commander": "军长",
+        "division_commander": "师长",
+        "brigade_commander": "旅长",
+        "regiment_commander": "团长",
+        "battalion_commander": "营长",
+        "company_commander": "连长",
+        "platoon_commander": "排长",
+        "engineer": "工兵",
+        "mine": "地雷",
+        "bomb": "炸弹",
+        "flag": "军旗",
+    ]
+    check(PieceCatalog.all.count == 12, "12 类棋子")
+    check(PieceCatalog.classifierIDs == expected, "分类器 ID 与训练端 PIECE_IDS 一致")
+    check(
+        Set(PieceCatalog.classifierIDs.values) == Set(PieceCatalog.all),
+        "分类器 ID 覆盖全部棋子"
+    )
+    check(PieceCatalog.name(forClassifierID: "unknown") == nil, "未知 ID 返回 nil")
+}
+
+// MARK: - BoardPieceClassifier
+
+func testPieceClassifierMapping() {
+    print("BoardPieceClassifier")
+    let threshold = 0.55
+
+    var cell = BoardPieceClassifier.observation(
+        stateLabel: "empty", stateConfidence: 0.99, minConfidence: threshold
+    )
+    check(cell.state == .empty, "empty 标签映射为空")
+    check(cell.color == nil && cell.piece == nil, "空格不带颜色/棋子")
+
+    cell = BoardPieceClassifier.observation(
+        stateLabel: "hidden", stateConfidence: 0.8, minConfidence: threshold
+    )
+    check(cell.state == .hidden, "hidden 标签映射为暗子")
+
+    cell = BoardPieceClassifier.observation(
+        stateLabel: "revealed", stateConfidence: 0.9,
+        colorLabel: "red", colorConfidence: 0.95,
+        pieceLabel: "commander", pieceConfidence: 0.88,
+        minConfidence: threshold
+    )
+    check(cell.state == .revealed, "三模型齐全映射为明子")
+    check(cell.color == .red, "颜色标签映射为红方")
+    check(cell.piece == "司令", "军衔 ID 映射为中文名")
+    check(abs(cell.confidence - 0.88) < 1e-9, "明子置信度取三模型最小")
+    check(cell.isActionable, "完整明子可行动")
+
+    cell = BoardPieceClassifier.observation(
+        stateLabel: "revealed", stateConfidence: 0.9,
+        colorLabel: "red", colorConfidence: 0.3,
+        pieceLabel: "commander", pieceConfidence: 0.95,
+        minConfidence: threshold
+    )
+    check(cell.state == .unknown, "颜色置信度不足降级 unknown")
+
+    cell = BoardPieceClassifier.observation(
+        stateLabel: "revealed", stateConfidence: 0.9,
+        colorLabel: "blue", colorConfidence: 0.95,
+        pieceLabel: "commander", pieceConfidence: 0.95,
+        minConfidence: threshold
+    )
+    check(cell.state == .unknown, "未知颜色标签降级 unknown")
+
+    cell = BoardPieceClassifier.observation(
+        stateLabel: "revealed", stateConfidence: 0.9,
+        colorLabel: "black", colorConfidence: 0.9,
+        pieceLabel: "unknown_piece", pieceConfidence: 0.9,
+        minConfidence: threshold
+    )
+    check(cell.state == .unknown, "未知军衔 ID 降级 unknown")
+
+    cell = BoardPieceClassifier.observation(
+        stateLabel: "empty", stateConfidence: 0.4, minConfidence: threshold
+    )
+    check(cell.state == .unknown, "低置信度状态降级 unknown")
+
+    cell = BoardPieceClassifier.observation(
+        stateLabel: "weird", stateConfidence: 0.99, minConfidence: threshold
+    )
+    check(cell.state == .unknown, "未知状态标签降级 unknown")
+}
+
+// MARK: - BoardStateBuilder / GameState
+
+private func stabilized(
+    _ cells: [CellObservation],
+    rows: Int = 2,
+    cols: Int = 2,
+    settling: Bool = false
+) -> StabilizedBoard {
+    StabilizedBoard(
+        rows: rows,
+        cols: cols,
+        cells: cells,
+        changedCells: 0,
+        isSettling: settling,
+        updatedAt: 0
+    )
+}
+
+func testGameStateEncoding() {
+    print("GameState · 序列化")
+    var builder = BoardStateBuilder(config: BoardStateBuilderConfig(myColor: .red))
+    let cells: [CellObservation] = [
+        .revealed(.red, "司令", confidence: 0.98),
+        .hidden(),
+        .empty(),
+        .revealed(.black, "军长", confidence: 0.9),
+    ]
+    let state = builder.build(
+        board: stabilized(cells),
+        timers: BoardTimerReading(me: 19, opponent: nil, turn: .me)
+    )
+
+    check(state.schema == 1, "schema 固定为 1")
+    check(state.phase == .playing, "默认 playing")
+    check(state.turn == .red, "我方执红时轮次为 red")
+    check(state.legalActions == [0, 1], "未选中：暗格 + 我方明子")
+    check(state.board.cells[0].piece == "commander", "棋子序列化为分类器 ID")
+    check(state.board.cells[0].color == .red, "明子保留颜色")
+    check(state.board.cells[1].piece == nil && state.board.cells[1].color == nil, "暗子不带棋子")
+    check(state.board.cells[2].state == .empty, "空格状态")
+    check(state.timers?.me == 19, "写入我方倒计时")
+
+    let json = state.jsonString() ?? ""
+    check(json.contains("\"legal_actions\":[0,1]"), "JSON 使用 legal_actions 下划线键")
+    check(json.contains("\"schema\":1"), "JSON 含 schema")
+    check(!json.contains("last_move"), "无移动时不写 last_move")
+    check(state.jsonData() != nil, "可编码为 JSON Data")
+}
+
+func testTurnResolution() {
+    print("BoardStateBuilder · 轮次")
+    var builder = BoardStateBuilder(config: BoardStateBuilderConfig(myColor: .red))
+    var state = builder.build(
+        board: stabilized([.hidden(), .hidden(), .hidden(), .hidden()]),
+        timers: BoardTimerReading(me: nil, opponent: 19, turn: .opponent)
+    )
+    check(state.turn == .black, "对方回合 → 黑方")
+
+    state = builder.build(board: stabilized([.hidden(), .hidden(), .hidden(), .hidden()]))
+    check(state.turn == .black, "证据缺失时保持上一次轮次")
+
+    let hit = OCRText(text: "我方走棋", rect: .zero, confidence: 1)
+    check(
+        BoardTurnReader.turnSignal(hits: [hit], me: nil, opponent: 19) == .me,
+        "文案优先于计时器推断"
+    )
+    check(
+        BoardTurnReader.turnSignal(hits: [], me: 19, opponent: nil) == .me,
+        "只有我方计时 → 我方回合"
+    )
+    check(
+        BoardTurnReader.turnSignal(hits: [], me: nil, opponent: 19) == .opponent,
+        "只有对方计时 → 对方回合"
+    )
+    check(
+        BoardTurnReader.turnSignal(hits: [], me: nil, opponent: nil) == .unknown,
+        "两边都没读到 → unknown"
+    )
+
+    let me = BoardTurnReader.turnSignal(hits: [], me: 19, opponent: 18)
+    check(me == .unknown, "两边都有计时 → 无法判定")
+}
+
+func testTimerParsing() {
+    print("BoardTurnReader · 倒计时解析")
+    check(BoardTurnReader.parseSeconds(from: ["19"]) == 19, "纯数字")
+    check(BoardTurnReader.parseSeconds(from: ["19秒"]) == 19, "数字带单位")
+    check(BoardTurnReader.parseSeconds(from: ["abc"]) == nil, "无数值返回 nil")
+    check(BoardTurnReader.parseSeconds(from: ["361"]) == nil, "超出上限视为误读")
+    check(BoardTurnReader.parseSeconds(from: ["", "x", "12"]) == 12, "跳过无效候选")
+}
+
+func testLegalActions() {
+    print("BoardStateBuilder · legal_actions")
+    let cells: [CellObservation] = [
+        .revealed(.red, "司令", confidence: 0.98),
+        .hidden(),
+        .empty(),
+        .revealed(.black, "军长", confidence: 0.9),
+    ]
+    var builder = BoardStateBuilder(config: BoardStateBuilderConfig(myColor: .red))
+
+    var state = builder.build(board: stabilized(cells), selected: 0)
+    check(state.legalActions == [2], "选中我方明子：相邻空格可进入，暗格不可作为移动目标")
+
+    state = builder.build(board: stabilized(cells), selected: 3)
+    check(state.legalActions == [0, 1], "选中敌方棋子无效，退回选子集合")
+
+    state = builder.build(board: stabilized(cells, settling: true), selected: 0)
+    check(state.legalActions.isEmpty, "冻结期不给可行动作")
+
+    state = builder.build(board: stabilized(cells), phase: .result, selected: 0)
+    check(state.legalActions.isEmpty, "结算页不给可行动作")
+
+    check(
+        BoardStateBuilder.neighbors(row: 0, col: 0, rows: 5, cols: 12) == [12, 1],
+        "5×12 左上角四邻"
+    )
+    check(
+        BoardStateBuilder.neighbors(row: 2, col: 5, rows: 5, cols: 12) == [17, 41, 28, 30],
+        "5×12 中部四邻顺序为上/下/左/右"
+    )
+}
+
+func testLastMoveInference() {
+    print("BoardStateBuilder · last_move")
+    var builder = BoardStateBuilder(config: BoardStateBuilderConfig(myColor: .red))
+    let before: [CellObservation] = [
+        .revealed(.red, "司令", confidence: 0.98),
+        .empty(),
+        .hidden(),
+        .hidden(),
+    ]
+    _ = builder.build(board: stabilized(before))
+    check(builder.build(board: stabilized(before), selected: nil).lastMove == nil, "首帧无移动")
+
+    let after: [CellObservation] = [
+        .empty(),
+        .revealed(.red, "司令", confidence: 0.98),
+        .hidden(),
+        .hidden(),
+    ]
+    let moved = builder.build(board: stabilized(after))
+    check(moved.lastMove == GameMove(from: 0, to: 1), "两格变化且棋子一致 → from 0 to 1")
+
+    let flipped: [CellObservation] = [
+        .empty(),
+        .revealed(.red, "司令", confidence: 0.98),
+        .revealed(.black, "连长", confidence: 0.9),
+        .hidden(),
+    ]
+    let flipState = builder.build(board: stabilized(flipped))
+    check(flipState.lastMove == GameMove(from: 0, to: 1), "翻牌不改写 last_move")
+
+    check(
+        BoardStateBuilder.inferMove(
+            from: before,
+            to: after,
+            changed: [0]
+        ) == nil,
+        "只有一格变化不算移动"
+    )
+}
+
+// MARK: - BoardTap
+
+func testTapGeometry() {
+    print("BoardTapGeometry · 坐标换算")
+    let quad = BoardQuad(
+        corners: [
+            CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0),
+            CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1),
+        ]
+    )!
+    let grid = BoardGrid(quad: quad, rows: 5, cols: 12)!
+    // 5×12 均分：格心 x = (1/24)、(1/24 + 1/12)…；格心 y = 1/10…
+    let first = BoardTapGeometry.contentCenter(of: 0, grid: grid)!
+    check(abs(first.x - 1.0 / 24) < 1e-9, "首列格心 u")
+    check(abs(first.y - 0.1) < 1e-9, "首行格心 v")
+    check(BoardTapGeometry.contentCenter(of: -1, grid: grid) == nil, "负索引返回 nil")
+    check(BoardTapGeometry.contentCenter(of: 60, grid: grid) == nil, "越界索引返回 nil")
+
+    // 内容区在窗口内留上下黑边：y 0.1..0.9。
+    let contentRect = CGRect(x: 0, y: 0.1, width: 1, height: 0.8)
+    let point = BoardTapGeometry.windowPoint(content: CGPoint(x: 0.5, y: 0.5), contentRect: contentRect)
+    check(abs(point.x - 0.5) < 1e-9, "内容 x 直接映射到窗口 x")
+    check(abs(point.y - 0.5) < 1e-9, "内容 y 经过黑边偏移")
+
+    let viaCell = BoardTapGeometry.windowPoint(of: 0, grid: grid, contentRect: contentRect)!
+    check(abs(viaCell.x - 1.0 / 24) < 1e-9, "格心换算 x 与内容坐标一致")
+    check(abs(viaCell.y - (0.1 + 0.1 * 0.8)) < 1e-9, "格心换算 y 叠加黑边")
+    check(BoardTapGeometry.windowPoint(of: 60, grid: grid, contentRect: contentRect) == nil, "越界格无落点")
+
+    check(BoardTapGeometry.isTappable(CGPoint(x: 0.5, y: 0.5)), "窗口内可点击")
+    check(!BoardTapGeometry.isTappable(CGPoint(x: 1.2, y: 0.5)), "窗口外拒绝")
+}
+
+func testTapPrecheck() {
+    print("BoardTapVerifier · 拒绝条件")
+    let cells: [CellObservation] = [
+        .revealed(.red, "司令", confidence: 0.98),
+        .hidden(),
+        .empty(),
+        .revealed(.black, "军长", confidence: 0.9),
+    ]
+    let board = stabilized(cells)
+    func refusal(
+        _ action: BoardTapAction,
+        turn: PieceColor = .red,
+        legal: [Int] = [1, 2],
+        phase: GamePhase = .playing,
+        settling: Bool = false
+    ) -> BoardTapRefusal? {
+        BoardTapVerifier.refusal(
+            for: action,
+            board: settling ? stabilized(cells, settling: true) : board,
+            turn: turn,
+            myColor: .red,
+            legalActions: legal,
+            phase: phase,
+            minPieceConfidence: 0.55
+        )
+    }
+
+    check(refusal(.flip(cell: 1)) == nil, "翻暗子可点击")
+    check(refusal(.flip(cell: 0)) == .cellNotHidden(0), "翻明子被拒")
+    check(refusal(.flip(cell: 9)) == .indexOutOfRange(9), "越界被拒")
+    check(refusal(.move(from: 0, to: 2)) == nil, "我方子移到空格可点击")
+    check(refusal(.move(from: 3, to: 1)) == .sourceNotOwnPiece(3), "敌方子不可移动")
+    check(refusal(.move(from: 0, to: 1), legal: [1]) == nil, "目标在可走集合内")
+    check(refusal(.move(from: 0, to: 1), legal: [2]) == .destinationNotLegal(1), "目标不在可走集合")
+    check(refusal(.move(from: 0, to: 0), legal: [0]) == .destinationNotLegal(0), "原地移动被拒")
+    check(refusal(.flip(cell: 1), turn: .black) == .notMyTurn, "对方回合不点")
+    check(refusal(.flip(cell: 1), phase: .result) == .phaseNotPlaying, "结算页不点")
+    check(refusal(.flip(cell: 1), settling: true) == .settling, "冻结期不点")
+}
+
+func testTapVerification() {
+    print("BoardTapVerifier · 结果判定")
+    let beforeFlip: [CellObservation] = [.hidden(), .empty(), .hidden(), .hidden()]
+    let afterFlip: [CellObservation] = [
+        .revealed(.red, "司令", confidence: 0.9), .empty(), .hidden(), .hidden(),
+    ]
+    check(
+        BoardTapVerifier.isSatisfied(.flip(cell: 0), before: beforeFlip, after: afterFlip),
+        "暗子翻成明子即验证通过"
+    )
+    check(
+        !BoardTapVerifier.isSatisfied(.flip(cell: 0), before: beforeFlip, after: beforeFlip),
+        "仍为暗子不通过"
+    )
+    let afterBadFlip: [CellObservation] = [
+        .empty(), .empty(), .hidden(), .hidden(),
+    ]
+    check(
+        !BoardTapVerifier.isSatisfied(.flip(cell: 0), before: beforeFlip, after: afterBadFlip),
+        "翻成空格不当作成功"
+    )
+    let afterNoPiece: [CellObservation] = [
+        .unknown(confidence: 0.3), .empty(), .hidden(), .hidden(),
+    ]
+    check(
+        !BoardTapVerifier.isSatisfied(.flip(cell: 0), before: beforeFlip, after: afterNoPiece),
+        "分类不可用不当作成功"
+    )
+
+    let beforeMove: [CellObservation] = [
+        .revealed(.red, "司令", confidence: 0.98), .empty(),
+        .hidden(), .hidden(),
+    ]
+    let afterMove: [CellObservation] = [
+        .empty(), .revealed(.red, "司令", confidence: 0.95),
+        .hidden(), .hidden(),
+    ]
+    check(
+        BoardTapVerifier.isSatisfied(.move(from: 0, to: 1), before: beforeMove, after: afterMove),
+        "源格变空 + 目标格出现同棋子即验证通过"
+    )
+    check(
+        BoardTapVerifier.changedCount(before: beforeMove, after: afterMove) == 2,
+        "移动涉及两格变化"
+    )
+    check(
+        BoardTapVerifier.mismatch(.flip(cell: 0), before: beforeFlip, after: beforeFlip)
+            .contains("仍是暗子"),
+        "翻牌超时说明仍为暗子"
+    )
+
+    let afterWrongPiece: [CellObservation] = [
+        .empty(), .revealed(.black, "连长", confidence: 0.9),
+        .hidden(), .hidden(),
+    ]
+    check(
+        !BoardTapVerifier.isSatisfied(.move(from: 0, to: 1), before: beforeMove, after: afterWrongPiece),
+        "目标格棋子不一致不通过"
+    )
+    check(
+        BoardTapVerifier.mismatch(.move(from: 0, to: 1), before: beforeMove, after: afterWrongPiece)
+            .contains("不一致"),
+        "说明目标格棋子不一致"
+    )
+    check(
+        BoardTapVerifier.mismatch(.move(from: 0, to: 1), before: beforeMove, after: beforeMove)
+            .contains("源格"),
+        "说明源格未变空"
+    )
+}
+
+// MARK: - ScreenState / 屏幕状态融合
+
+func testScreenStateLabels() {
+    print("ScreenState · 七分类标签")
+    check(
+        ScreenState.allCases.map(\.rawValue) == [
+            "main", "modeLobby", "matching", "board", "result", "popup", "unknown",
+        ],
+        "七分类顺序与训练目录一致"
+    )
+    check(ScreenState.main.label == "主菜单", "main 显示为主菜单")
+    check(ScreenState.modeLobby.label == "场次选择", "modeLobby 显示为场次选择")
+    check(ScreenState.matching.label == "匹配中", "matching 显示为匹配中")
+    check(ScreenState.board.label == "牌局", "board 显示为牌局")
+    check(ScreenState.result.label == "结算页", "result 显示为结算页")
+    check(ScreenState.popup.label == "弹窗", "popup 显示为弹窗")
+    check(ScreenState.unknown.label == "未识别", "unknown 显示为未识别")
+
+    check(ScreenState(classifierLabel: "board") == .board, "模型标签 board 映射正确")
+    check(ScreenState(classifierLabel: "venue") == .modeLobby, "兼容旧 venue 标签")
+    check(ScreenState(classifierLabel: "nope") == nil, "未知标签返回 nil")
+}
+
+func testScreenStateFusion() {
+    print("ScreenStateFusion · 模型/OCR 融合")
+
+    // 无模型 / 低置信度：OCR 兜底。
+    var resolved = ScreenStateFusion.resolve(
+        modelLabel: nil, confidence: 0, ocrState: .board
+    )
+    check(resolved.state == .board && resolved.source == .ocr, "无预测时用 OCR 结果")
+
+    resolved = ScreenStateFusion.resolve(
+        modelLabel: nil, confidence: 0, ocrState: .unknown
+    )
+    check(
+        resolved.state == .unknown && resolved.source == .none,
+        "模型和 OCR 都认不出时为 unknown/—"
+    )
+
+    resolved = ScreenStateFusion.resolve(
+        modelLabel: "board", confidence: 0.59, ocrState: .main
+    )
+    check(resolved.state == .main && resolved.source == .ocr, "置信度低于 0.60 时退回 OCR")
+
+    resolved = ScreenStateFusion.resolve(
+        modelLabel: "board", confidence: 0.60, ocrState: .main
+    )
+    check(resolved.state == .board && resolved.source == .model, "置信度 0.60 达到阈值")
+
+    // 模型高置信：模型为主。
+    resolved = ScreenStateFusion.resolve(
+        modelLabel: "board", confidence: 0.9, ocrState: .unknown
+    )
+    check(resolved.state == .board && resolved.source == .model, "模型高置信时采用模型")
+    check(ScreenStateFusion.Source.model.rawValue == "模型", "来源显示为模型")
+    check(ScreenStateFusion.Source.none.rawValue == "—", "无来源显示为 —")
+
+    // 退出确认弹窗：OCR 必须能覆盖模型误判。
+    resolved = ScreenStateFusion.resolve(
+        modelLabel: "matching", confidence: 0.95, ocrState: .popup
+    )
+    check(
+        resolved.state == .popup && resolved.source == .ocr,
+        "模型误判 matching 时 OCR 弹窗优先"
+    )
+
+    resolved = ScreenStateFusion.resolve(
+        modelLabel: "popup", confidence: 0.9, ocrState: .popup
+    )
+    check(resolved.state == .popup && resolved.source == .model, "模型也判弹窗时保留模型来源")
+
+    // 模型 unknown + OCR 命中：以 OCR 为准。
+    resolved = ScreenStateFusion.resolve(
+        modelLabel: "unknown", confidence: 0.9, ocrState: .result
+    )
+    check(
+        resolved.state == .result && resolved.source == .ocr,
+        "模型 unknown 且 OCR 命中时采用 OCR"
+    )
+
+    resolved = ScreenStateFusion.resolve(
+        modelLabel: "unknown", confidence: 0.9, ocrState: .unknown
+    )
+    check(
+        resolved.state == .unknown && resolved.source == .model,
+        "两边都是 unknown 时保留模型来源"
+    )
+
+    // 旧标签 / 脏标签。
+    resolved = ScreenStateFusion.resolve(
+        modelLabel: "venue", confidence: 0.9, ocrState: .unknown
+    )
+    check(
+        resolved.state == .modeLobby && resolved.source == .model,
+        "旧 venue 标签仍映射到场次选择"
+    )
+
+    resolved = ScreenStateFusion.resolve(
+        modelLabel: "garbage", confidence: 0.9, ocrState: .main
+    )
+    check(resolved.state == .main && resolved.source == .ocr, "无法解析的模型标签退回 OCR")
+}
+
 // MARK: - Main
 
+testPieceCatalog()
+testPieceClassifierMapping()
+testScreenStateLabels()
+testScreenStateFusion()
+testGameStateEncoding()
+testTurnResolution()
+testTimerParsing()
+testLegalActions()
+testLastMoveInference()
+testTapGeometry()
+testTapPrecheck()
+testTapVerification()
 testBoardGeometry()
+testBoardMask()
 testStabilizerVotesOutNoise()
 testStabilizerFiltersLowConfidence()
 testStabilizerFreezesBoardWideChange()
 testStabilizerResetsOnSizeChange()
 testCellObservationNormalization()
 testSnapshotLibrary()
+testAutoLabelVote()
+testAutoLabelPersistence()
+testBoardChangeDetector()
+testBoardCellDeltas()
+testAutoSampleTracker()
 
 if failures > 0 {
     print("\n\(failures)/\(checks) 个断言失败")

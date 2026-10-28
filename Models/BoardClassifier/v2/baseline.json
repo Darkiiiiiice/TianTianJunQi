@@ -1,0 +1,834 @@
+{
+  "createdAt": "2026-10-27T09:53:15.317973+00:00",
+  "dataset": "/Users/mariomang/Library/Application Support/TianTianJunqiAI/datasets/board-classifier-v2",
+  "settings": {
+    "batchSize": 64,
+    "epochs": 40,
+    "imageSize": 128,
+    "learningRate": 0.001,
+    "seed": 0
+  },
+  "tasks": {
+    "color": {
+      "accuracy": 1.0,
+      "bestEpoch": 1,
+      "classes": [
+        "red",
+        "black"
+      ],
+      "confusionMatrix": [
+        [
+          53,
+          0
+        ],
+        [
+          0,
+          63
+        ]
+      ],
+      "epochs": 40,
+      "perClass": [
+        {
+          "class": "red",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 53,
+          "recall": 1.0,
+          "support": 53
+        },
+        {
+          "class": "black",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 63,
+          "recall": 1.0,
+          "support": 63
+        }
+      ],
+      "samples": 116,
+      "task": "color",
+      "testDistribution": {
+        "black": 105,
+        "red": 92
+      },
+      "testImages": 197,
+      "testMetrics": {
+        "accuracy": 1.0,
+        "confusionMatrix": [
+          [
+            92,
+            0
+          ],
+          [
+            0,
+            105
+          ]
+        ],
+        "perClass": [
+          {
+            "class": "red",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 92,
+            "recall": 1.0,
+            "support": 92
+          },
+          {
+            "class": "black",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 105,
+            "recall": 1.0,
+            "support": 105
+          }
+        ],
+        "samples": 197,
+        "topConfusions": []
+      },
+      "topConfusions": [],
+      "trainDistribution": {
+        "black": 320,
+        "red": 287
+      },
+      "trainImages": 607,
+      "valAccuracy": 1.0,
+      "valDistribution": {
+        "black": 63,
+        "red": 53
+      },
+      "valImages": 116
+    },
+    "piece": {
+      "accuracy": 1.0,
+      "bestEpoch": 36,
+      "classes": [
+        "commander",
+        "army_commander",
+        "division_commander",
+        "brigade_commander",
+        "regiment_commander",
+        "battalion_commander",
+        "company_commander",
+        "platoon_commander",
+        "engineer",
+        "mine",
+        "bomb",
+        "flag"
+      ],
+      "confusionMatrix": [
+        [
+          9,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          4,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          18,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          11,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          12,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          3,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          17,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          4,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          13,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          16,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          6,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          3
+        ]
+      ],
+      "epochs": 40,
+      "perClass": [
+        {
+          "class": "commander",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 9,
+          "recall": 1.0,
+          "support": 9
+        },
+        {
+          "class": "army_commander",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 4,
+          "recall": 1.0,
+          "support": 4
+        },
+        {
+          "class": "division_commander",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 18,
+          "recall": 1.0,
+          "support": 18
+        },
+        {
+          "class": "brigade_commander",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 11,
+          "recall": 1.0,
+          "support": 11
+        },
+        {
+          "class": "regiment_commander",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 12,
+          "recall": 1.0,
+          "support": 12
+        },
+        {
+          "class": "battalion_commander",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 3,
+          "recall": 1.0,
+          "support": 3
+        },
+        {
+          "class": "company_commander",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 17,
+          "recall": 1.0,
+          "support": 17
+        },
+        {
+          "class": "platoon_commander",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 4,
+          "recall": 1.0,
+          "support": 4
+        },
+        {
+          "class": "engineer",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 13,
+          "recall": 1.0,
+          "support": 13
+        },
+        {
+          "class": "mine",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 16,
+          "recall": 1.0,
+          "support": 16
+        },
+        {
+          "class": "bomb",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 6,
+          "recall": 1.0,
+          "support": 6
+        },
+        {
+          "class": "flag",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 3,
+          "recall": 1.0,
+          "support": 3
+        }
+      ],
+      "samples": 116,
+      "task": "piece",
+      "testDistribution": {
+        "army_commander": 14,
+        "battalion_commander": 32,
+        "bomb": 12,
+        "brigade_commander": 18,
+        "commander": 5,
+        "company_commander": 25,
+        "division_commander": 10,
+        "engineer": 22,
+        "flag": 4,
+        "mine": 17,
+        "platoon_commander": 13,
+        "regiment_commander": 25
+      },
+      "testImages": 197,
+      "testMetrics": {
+        "accuracy": 1.0,
+        "confusionMatrix": [
+          [
+            5,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            14,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            10,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            18,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            25,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            32,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            25,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            13,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            22,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            17,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            12,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4
+          ]
+        ],
+        "perClass": [
+          {
+            "class": "commander",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 5,
+            "recall": 1.0,
+            "support": 5
+          },
+          {
+            "class": "army_commander",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 14,
+            "recall": 1.0,
+            "support": 14
+          },
+          {
+            "class": "division_commander",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 10,
+            "recall": 1.0,
+            "support": 10
+          },
+          {
+            "class": "brigade_commander",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 18,
+            "recall": 1.0,
+            "support": 18
+          },
+          {
+            "class": "regiment_commander",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 25,
+            "recall": 1.0,
+            "support": 25
+          },
+          {
+            "class": "battalion_commander",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 32,
+            "recall": 1.0,
+            "support": 32
+          },
+          {
+            "class": "company_commander",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 25,
+            "recall": 1.0,
+            "support": 25
+          },
+          {
+            "class": "platoon_commander",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 13,
+            "recall": 1.0,
+            "support": 13
+          },
+          {
+            "class": "engineer",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 22,
+            "recall": 1.0,
+            "support": 22
+          },
+          {
+            "class": "mine",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 17,
+            "recall": 1.0,
+            "support": 17
+          },
+          {
+            "class": "bomb",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 12,
+            "recall": 1.0,
+            "support": 12
+          },
+          {
+            "class": "flag",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 4,
+            "recall": 1.0,
+            "support": 4
+          }
+        ],
+        "samples": 197,
+        "topConfusions": []
+      },
+      "topConfusions": [],
+      "trainDistribution": {
+        "army_commander": 48,
+        "battalion_commander": 73,
+        "bomb": 22,
+        "brigade_commander": 35,
+        "commander": 59,
+        "company_commander": 73,
+        "division_commander": 58,
+        "engineer": 62,
+        "flag": 12,
+        "mine": 56,
+        "platoon_commander": 63,
+        "regiment_commander": 46
+      },
+      "trainImages": 607,
+      "valAccuracy": 1.0,
+      "valDistribution": {
+        "army_commander": 4,
+        "battalion_commander": 3,
+        "bomb": 6,
+        "brigade_commander": 11,
+        "commander": 9,
+        "company_commander": 17,
+        "division_commander": 18,
+        "engineer": 13,
+        "flag": 3,
+        "mine": 16,
+        "platoon_commander": 4,
+        "regiment_commander": 12
+      },
+      "valImages": 116
+    },
+    "state": {
+      "accuracy": 1.0,
+      "bestEpoch": 2,
+      "classes": [
+        "empty",
+        "hidden",
+        "revealed"
+      ],
+      "confusionMatrix": [
+        [
+          42,
+          0,
+          0
+        ],
+        [
+          0,
+          42,
+          0
+        ],
+        [
+          0,
+          0,
+          116
+        ]
+      ],
+      "epochs": 40,
+      "perClass": [
+        {
+          "class": "empty",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 42,
+          "recall": 1.0,
+          "support": 42
+        },
+        {
+          "class": "hidden",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 42,
+          "recall": 1.0,
+          "support": 42
+        },
+        {
+          "class": "revealed",
+          "f1": 1.0,
+          "precision": 1.0,
+          "predicted": 116,
+          "recall": 1.0,
+          "support": 116
+        }
+      ],
+      "samples": 200,
+      "task": "state",
+      "testDistribution": {
+        "empty": 158,
+        "hidden": 75,
+        "revealed": 197
+      },
+      "testImages": 430,
+      "testMetrics": {
+        "accuracy": 1.0,
+        "confusionMatrix": [
+          [
+            158,
+            0,
+            0
+          ],
+          [
+            0,
+            75,
+            0
+          ],
+          [
+            0,
+            0,
+            197
+          ]
+        ],
+        "perClass": [
+          {
+            "class": "empty",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 158,
+            "recall": 1.0,
+            "support": 158
+          },
+          {
+            "class": "hidden",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 75,
+            "recall": 1.0,
+            "support": 75
+          },
+          {
+            "class": "revealed",
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 197,
+            "recall": 1.0,
+            "support": 197
+          }
+        ],
+        "samples": 430,
+        "topConfusions": []
+      },
+      "topConfusions": [],
+      "trainDistribution": {
+        "empty": 579,
+        "hidden": 325,
+        "revealed": 607
+      },
+      "trainImages": 1511,
+      "valAccuracy": 1.0,
+      "valDistribution": {
+        "empty": 42,
+        "hidden": 42,
+        "revealed": 116
+      },
+      "valImages": 200
+    }
+  }
+}

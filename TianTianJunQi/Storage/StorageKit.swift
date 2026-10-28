@@ -26,6 +26,10 @@ struct StorageKit {
     var perceptionURL: URL { rootURL.appendingPathComponent("perception", isDirectory: true) }
     /// 棋盘样本：整帧 + 每个格子的透视图 + meta.json（M1-3/M2-7）。
     var samplesURL: URL { perceptionURL.appendingPathComponent("samples", isDirectory: true) }
+    /// 屏幕分类样本：窗口内容区整帧 + 人工标签（M1-7）。
+    var screenSamplesURL: URL {
+        perceptionURL.appendingPathComponent("screen-samples", isDirectory: true)
+    }
     var simURL: URL { rootURL.appendingPathComponent("sim", isDirectory: true) }
     var logsURL: URL { rootURL.appendingPathComponent("logs", isDirectory: true) }
 
@@ -35,6 +39,7 @@ struct StorageKit {
         for url in [rootURL, episodesURL, datasetsURL, modelsURL, perceptionURL, simURL, logsURL] {
             try fm.createDirectory(at: url, withIntermediateDirectories: true)
         }
+        try fm.createDirectory(at: screenSamplesURL, withIntermediateDirectories: true)
     }
 
     // MARK: game-profile.json
@@ -105,7 +110,15 @@ struct GameProfile: Codable, Equatable, Sendable {
             minSize: CGSize(width: 240, height: 180),
             canvasROI: CGRect(x: 0.0, y: 0.07, width: 1.0, height: 0.93)
         ),
-        board: BoardSpec(rows: 5, cols: 12, piecesPerSide: 30, theme: "default"),
+        board: BoardSpec(
+            rows: 5,
+            cols: 12,
+            piecesPerSide: 25,
+            theme: "default",
+            // 2026-10-27 实测：7 个会话首帧都是 50 枚棋子 + 10 个固定绿色圆圈空站点；
+            // 站点开局为空，但后续可被棋子占据（不是永久空格）。
+            stationCells: [14, 16, 19, 21, 27, 32, 38, 40, 43, 45]
+        ),
         opponent: OpponentSpec(
             style: "quickMatch",
             venue: "新手场",
@@ -128,9 +141,12 @@ struct WindowSpec: Codable, Equatable, Sendable {
 struct BoardSpec: Codable, Equatable, Sendable {
     var rows: Int
     var cols: Int
+    /// 棋盘上每方棋子数（2026-10-27 实测：25，不是 30）。
     var piecesPerSide: Int
     /// 皮肤/主题：校准失效判定用。
     var theme: String
+    /// 开局固定空站点（行优先索引）。可被棋子占据，不是永久空格。
+    var stationCells: [Int]?
 }
 
 struct OpponentSpec: Codable, Equatable, Sendable {
@@ -161,6 +177,10 @@ struct Calibration: Codable, Equatable, Sendable {
     var canvasROI: CGRect
     /// 棋盘四角（左上 → 右上 → 右下 → 左下）。
     var boardCorners: [CGPoint]
+    /// 每列中心线（归一化图像 x，数量 = 列数）。旧校准没有这一项，按均分处理。
+    var boardColumnCenters: [CGFloat]?
+    /// 每行中心线（归一化图像 y，数量 = 行数）。
+    var boardRowCenters: [CGFloat]?
     /// “翻翻棋”入口。
     var modeEntry: CGRect
     /// 开始/再来一局/关闭/场次等按钮锚点。

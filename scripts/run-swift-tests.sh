@@ -8,10 +8,20 @@ BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ttj-swift-tests.XXXXXX")"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
 swiftc \
+  "$ROOT/TianTianJunQi/Perception/AutoLabelVote.swift" \
+  "$ROOT/TianTianJunQi/Perception/BoardAutoSampleTracker.swift" \
+  "$ROOT/TianTianJunQi/Perception/BoardChangeDetector.swift" \
   "$ROOT/TianTianJunQi/Perception/BoardGeometry.swift" \
+  "$ROOT/TianTianJunQi/Perception/BoardPieceClassifier.swift" \
   "$ROOT/TianTianJunQi/Perception/BoardSnapshotExporter.swift" \
   "$ROOT/TianTianJunQi/Perception/BoardStabilizer.swift" \
+  "$ROOT/TianTianJunQi/Perception/BoardStateBuilder.swift" \
+  "$ROOT/TianTianJunQi/Perception/BoardTap.swift" \
+  "$ROOT/TianTianJunQi/Perception/BoardTurnReader.swift" \
+  "$ROOT/TianTianJunQi/Perception/GameState.swift" \
+  "$ROOT/TianTianJunQi/Perception/OCRText.swift" \
   "$ROOT/TianTianJunQi/Perception/PieceCatalog.swift" \
+  "$ROOT/TianTianJunQi/Perception/ScreenState.swift" \
   "$ROOT/TianTianJunQi/Perception/SnapshotLibrary.swift" \
   "$ROOT/TianTianJunQi/Storage/StorageKit.swift" \
   "$ROOT/Tests/SwiftPerception/main.swift" \

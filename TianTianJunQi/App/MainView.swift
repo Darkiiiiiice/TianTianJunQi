@@ -11,6 +11,9 @@ struct MainView: View {
     @State private var injector = InputInjector()
     @State private var modeEntry = ModeEntry()
     @State private var calibration = CalibrationStore()
+    @State private var autoSampler = BoardAutoSampler()
+    @State private var perception = BoardPerceptionService()
+    @State private var tapService = BoardTapService()
     @State private var gameProfile = GameProfile.tianTianJunQi
     @State private var selection: Page = .overview
     /// 调试开关：只验证入口点击，不点场次卡（不开始真人匹配）。
@@ -33,7 +36,9 @@ struct MainView: View {
             OverviewView(
                 store: store, permissions: permissions, windows: windows,
                 capture: capture, screenState: screenState, modeEntry: modeEntry,
-                calibration: calibration,
+                calibration: calibration, autoSampler: autoSampler,
+                perception: perception,
+                tapService: tapService, injector: injector,
                 boardRows: gameProfile.board.rows,
                 boardCols: gameProfile.board.cols,
                 entryOnly: $entryOnly,
@@ -88,6 +93,33 @@ struct MainView: View {
             NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
         ) { _ in
             permissions.refresh()
+        }
+        .task {
+            // M1-7：启动即加载并预热 Core ML 屏幕分类器；失败自动退回 OCR。
+            await screenState.prepare()
+        }
+        .task {
+            // 常驻对局自动采样：视图销毁时取消。
+            await autoSampler.run(
+                capture: capture,
+                calibration: calibration,
+                windows: windows,
+                screenState: screenState,
+                store: store,
+                rows: gameProfile.board.rows,
+                cols: gameProfile.board.cols
+            )
+        }
+        .task {
+            // M1-4：常驻棋局感知，分类器 → 时序平滑 → 稳定棋盘。
+            await perception.run(
+                capture: capture,
+                calibration: calibration,
+                screenState: screenState,
+                store: store,
+                rows: gameProfile.board.rows,
+                cols: gameProfile.board.cols
+            )
         }
     }
 

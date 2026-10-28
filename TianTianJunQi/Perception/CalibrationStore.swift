@@ -51,6 +51,8 @@ final class CalibrationStore {
     func save(
         canvasROI: CGRect,
         boardCorners: [CGPoint],
+        boardColumnCenters: [CGFloat]? = nil,
+        boardRowCenters: [CGFloat]? = nil,
         modeEntry: CGRect,
         venue: CGRect,
         windowSize: CGSize,
@@ -62,6 +64,8 @@ final class CalibrationStore {
             windowSize: windowSize,
             canvasROI: canvasROI,
             boardCorners: boardCorners,
+            boardColumnCenters: boardColumnCenters,
+            boardRowCenters: boardRowCenters,
             modeEntry: modeEntry,
             buttons: buttons,
             templates: calibration?.templates ?? [:],

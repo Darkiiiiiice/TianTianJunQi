@@ -10,6 +10,8 @@ struct SnapshotCellLabel: Codable, Equatable, Sendable, Identifiable {
     var state: CellState
     var color: PieceColor?
     var piece: String?
+    /// 由自动标注填入、尚未人工确认。旧 `labels.json` 没有该字段时为 nil。
+    var auto: Bool?
 
     var id: Int { index }
 
@@ -19,7 +21,8 @@ struct SnapshotCellLabel: Codable, Equatable, Sendable, Identifiable {
         col: Int,
         state: CellState = .unknown,
         color: PieceColor? = nil,
-        piece: String? = nil
+        piece: String? = nil,
+        auto: Bool? = nil
     ) {
         self.index = index
         self.row = row
@@ -27,6 +30,7 @@ struct SnapshotCellLabel: Codable, Equatable, Sendable, Identifiable {
         self.state = state
         self.color = color
         self.piece = piece
+        self.auto = auto
         normalize()
     }
 
@@ -52,20 +56,36 @@ struct SnapshotCellLabel: Codable, Equatable, Sendable, Identifiable {
 
     mutating func setState(_ newState: CellState) {
         state = newState
-        if newState == .revealed, color == nil {
-            color = .red
-        }
+        // 不再默认红色：否则逐格标注黑方明子时容易把颜色留成红色（r2c11 误判根因）。
+        // 明子必须由标注者显式选择颜色；isComplete 会把缺色格拦下来。
+        auto = nil
         normalize()
     }
 
     mutating func setColor(_ newColor: PieceColor?) {
         color = newColor
+        auto = nil
         normalize()
     }
 
     mutating func setPiece(_ newPiece: String?) {
         piece = newPiece?.trimmingCharacters(in: .whitespacesAndNewlines)
+        auto = nil
         normalize()
+    }
+
+    /// 自动标注结果：整格一次写入，并打上待人工确认的标记。
+    mutating func applyAuto(state newState: CellState, color newColor: PieceColor?, piece newPiece: String?) {
+        state = newState
+        color = newColor
+        piece = newPiece
+        auto = true
+        normalize()
+    }
+
+    /// 人工确认后清除自动标记。
+    mutating func confirm() {
+        auto = nil
     }
 
     /// 非明子清空颜色/棋子；明子只保留合法棋子名。
@@ -154,6 +174,31 @@ struct SnapshotLabels: Codable, Equatable, Sendable {
     mutating func setAll(_ state: CellState) {
         for index in cells.indices {
             cells[index].setState(state)
+            cells[index].auto = nil
+        }
+        updatedAt = Date()
+    }
+
+    /// 自动标注填过的格数（含已被人工改动、标记已清除的格）。
+    var autoCount: Int { cells.filter { $0.auto == true }.count }
+    var unknownCount: Int { cells.filter { $0.state == .unknown }.count }
+
+    /// 复核通过后一次性确认所有自动标注格。
+    mutating func confirmAllAuto() {
+        guard autoCount > 0 else { return }
+        for index in cells.indices where cells[index].auto == true {
+            cells[index].confirm()
+        }
+        updatedAt = Date()
+    }
+
+    /// 把所有自动标注的格子退回「未标」。
+    mutating func clearAuto() {
+        for index in cells.indices where cells[index].auto == true {
+            cells[index].state = .unknown
+            cells[index].color = nil
+            cells[index].piece = nil
+            cells[index].auto = nil
         }
         updatedAt = Date()
     }
@@ -188,6 +233,10 @@ struct SnapshotSummary: Identifiable, Equatable, Sendable {
     let windowSize: CGSize?
     let theme: String?
     let manifestError: String?
+    /// "auto" 表示对局中棋盘变化后自动采样；nil/"manual" 表示手动采集。
+    let origin: String?
+
+    var isAutoSampled: Bool { origin == "auto" }
 
     var cellCount: Int { (rows ?? 0) * (cols ?? 0) }
     var isValidManifest: Bool { manifestError == nil && (rows ?? 0) > 0 && (cols ?? 0) > 0 }
@@ -240,7 +289,8 @@ struct SnapshotLibrary {
                         cols: manifest.cols,
                         windowSize: manifest.windowSize,
                         theme: manifest.theme,
-                        manifestError: nil
+                        manifestError: nil,
+                        origin: manifest.origin
                     )
                 } catch {
                     return SnapshotSummary(
@@ -251,7 +301,8 @@ struct SnapshotLibrary {
                         cols: nil,
                         windowSize: nil,
                         theme: nil,
-                        manifestError: error.localizedDescription
+                        manifestError: error.localizedDescription,
+                        origin: nil
                     )
                 }
             }

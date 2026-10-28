@@ -45,6 +45,9 @@ struct BoardSnapshotManifest: Codable, Sendable {
     let boardCorners: [CGPoint]
     let contentPixelSize: CGSize
     let cells: [Cell]
+    /// 采集来源："auto" = 对局中棋盘变化后自动采样；nil/"manual" = 手动采集。
+    /// 旧快照没有该字段，解码为 nil。
+    var origin: String? = nil
 }
 
 /// 棋盘样本导出（M1-3 数据采集 / M2-7 关键帧落盘）：
@@ -63,17 +66,15 @@ struct BoardSnapshotExporter {
         frame: CapturedFrame,
         grid: BoardGrid,
         windowSize: CGSize?,
-        theme: String?
+        theme: String?,
+        origin: String? = nil
     ) throws -> URL {
         let content = try Self.contentImage(from: frame)
         let width = content.extent.width
         let height = content.extent.height
         guard width > 8, height > 8 else { throw BoardSnapshotError.invalidFrame }
 
-        let directory = rootURL.appendingPathComponent(
-            "snapshot-\(Self.folderTimestamp(Date()))",
-            isDirectory: true
-        )
+        let directory = Self.uniqueDirectory(in: rootURL)
         let cellsDirectory = directory.appendingPathComponent("cells", isDirectory: true)
         try FileManager.default.createDirectory(
             at: cellsDirectory, withIntermediateDirectories: true
@@ -88,31 +89,15 @@ struct BoardSnapshotExporter {
         for row in 0..<grid.rows {
             for col in 0..<grid.cols {
                 let index = row * grid.cols + col
-                let u0 = (CGFloat(col) + inset) / CGFloat(grid.cols)
-                let u1 = (CGFloat(col + 1) - inset) / CGFloat(grid.cols)
-                let v0 = (CGFloat(row) + inset) / CGFloat(grid.rows)
-                let v1 = (CGFloat(row + 1) - inset) / CGFloat(grid.rows)
-
-                let topLeft = Self.pixelPoint(
-                    grid.point(u: u0, v: v0), width: width, height: height
-                )
-                let topRight = Self.pixelPoint(
-                    grid.point(u: u1, v: v0), width: width, height: height
-                )
-                let bottomLeft = Self.pixelPoint(
-                    grid.point(u: u0, v: v1), width: width, height: height
-                )
-                let bottomRight = Self.pixelPoint(
-                    grid.point(u: u1, v: v1), width: width, height: height
-                )
-
-                guard let cell = Self.rectify(
+                guard let cell = Self.renderCell(
                     content,
-                    topLeft: topLeft,
-                    topRight: topRight,
-                    bottomLeft: bottomLeft,
-                    bottomRight: bottomRight,
-                    size: cellSize
+                    grid: grid,
+                    row: row,
+                    col: col,
+                    size: cellSize,
+                    inset: inset,
+                    width: width,
+                    height: height
                 ) else {
                     throw BoardSnapshotError.cellRenderFailed(row: row, col: col)
                 }
@@ -141,7 +126,8 @@ struct BoardSnapshotExporter {
             cellSize: cellSize,
             boardCorners: grid.quad.corners,
             contentPixelSize: CGSize(width: width, height: height),
-            cells: records
+            cells: records,
+            origin: origin
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -155,8 +141,80 @@ struct BoardSnapshotExporter {
 
     // MARK: - Rendering
 
+    /// 内存版格子切图（行优先，索引 = row * cols + col），不落盘。
+    ///
+    /// 供 M1-4 实时感知直接喂 Core ML。参数必须与 `export` 保持一致
+    /// （`inset 0.04` / `cellSize 128`），否则会出现训练/推理口径偏移。
+    static func cellImages(
+        from frame: CapturedFrame,
+        grid: BoardGrid,
+        cellSize: Int = 128,
+        inset: CGFloat = 0.04
+    ) throws -> [CGImage] {
+        let content = try contentImage(from: frame)
+        let width = content.extent.width
+        let height = content.extent.height
+        guard width > 8, height > 8 else { throw BoardSnapshotError.invalidFrame }
+
+        var images: [CGImage] = []
+        images.reserveCapacity(grid.rows * grid.cols)
+        for row in 0..<grid.rows {
+            for col in 0..<grid.cols {
+                guard let cell = renderCell(
+                    content,
+                    grid: grid,
+                    row: row,
+                    col: col,
+                    size: cellSize,
+                    inset: inset,
+                    width: width,
+                    height: height
+                ) else {
+                    throw BoardSnapshotError.cellRenderFailed(row: row, col: col)
+                }
+                images.append(cell)
+            }
+        }
+        return images
+    }
+
+    /// 按行列取一格的透视校正图；export 与内存切图共用这一处几何。
+    private static func renderCell(
+        _ content: CIImage,
+        grid: BoardGrid,
+        row: Int,
+        col: Int,
+        size: Int,
+        inset: CGFloat,
+        width: CGFloat,
+        height: CGFloat
+    ) -> CGImage? {
+        let bounds = grid.cellRect(row: row, col: col, inset: inset)
+        let topLeft = pixelPoint(
+            grid.point(u: bounds.u0, v: bounds.v0), width: width, height: height
+        )
+        let topRight = pixelPoint(
+            grid.point(u: bounds.u1, v: bounds.v0), width: width, height: height
+        )
+        let bottomLeft = pixelPoint(
+            grid.point(u: bounds.u0, v: bounds.v1), width: width, height: height
+        )
+        let bottomRight = pixelPoint(
+            grid.point(u: bounds.u1, v: bounds.v1), width: width, height: height
+        )
+        return rectify(
+            content,
+            topLeft: topLeft,
+            topRight: topRight,
+            bottomLeft: bottomLeft,
+            bottomRight: bottomRight,
+            size: size
+        )
+    }
+
     /// 与预览/OCR 相同的裁剪方式，并把 extent 平移到 (0,0)。
-    private static func contentImage(from frame: CapturedFrame) throws -> CIImage {
+    /// 供自动采样做缩略图指纹复用，避免重复一段裁剪逻辑。
+    static func contentImage(from frame: CapturedFrame) throws -> CIImage {
         let source = CIImage(cvPixelBuffer: frame.pixelBuffer)
         let extent = source.extent
         guard extent.width > 8, extent.height > 8 else {
@@ -248,5 +306,17 @@ struct BoardSnapshotExporter {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
         return formatter.string(from: date)
+    }
+
+    /// 同一毫秒内手动/自动各存一份时也不覆盖：冲突就加序号后缀。
+    private static func uniqueDirectory(in rootURL: URL) -> URL {
+        let base = "snapshot-\(folderTimestamp(Date()))"
+        var candidate = rootURL.appendingPathComponent(base, isDirectory: true)
+        var index = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = rootURL.appendingPathComponent("\(base)-\(index)", isDirectory: true)
+            index += 1
+        }
+        return candidate
     }
 }

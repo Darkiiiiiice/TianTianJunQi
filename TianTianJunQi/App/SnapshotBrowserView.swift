@@ -16,10 +16,52 @@ struct SnapshotBrowserView: View {
     @State private var selectedCell = 0
     @State private var message: String?
     @State private var errorMessage: String?
+    @State private var filter: ReviewFilter = .all
+    @State private var originFilter: OriginFilter = .all
+    @State private var autoLabeling = false
+    @State private var autoStatus: String?
+
+    private enum ReviewFilter: String, CaseIterable, Identifiable {
+        case all
+        case unknown
+        case auto
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .all: "全部"
+            case .unknown: "未标"
+            case .auto: "自动"
+            }
+        }
+    }
+
+    /// 快照来源筛选：自动采样 / 手动采集 / 全部。
+    private enum OriginFilter: String, CaseIterable, Identifiable {
+        case all
+        case auto
+        case manual
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .all: "全部"
+            case .auto: "自动采样"
+            case .manual: "手动"
+            }
+        }
+    }
 
     private var library: SnapshotLibrary { SnapshotLibrary(rootURL: rootURL) }
     private var selectedSummary: SnapshotSummary? {
         snapshots.first { $0.id == selectedSnapshotID }
+    }
+    private var visibleSnapshots: [SnapshotSummary] {
+        switch originFilter {
+        case .all: snapshots
+        case .auto: snapshots.filter(\.isAutoSampled)
+        case .manual: snapshots.filter { !$0.isAutoSampled }
+        }
     }
 
     var body: some View {
@@ -52,7 +94,7 @@ struct SnapshotBrowserView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text("\(snapshots.count) 份快照")
+            Text("\(visibleSnapshots.count) 份快照")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Button("刷新") { reload() }
@@ -82,32 +124,53 @@ struct SnapshotBrowserView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 14)
                 .padding(.top, 14)
-                .padding(.bottom, 8)
+                .padding(.bottom, 6)
 
-            if snapshots.isEmpty {
+            Picker("来源", selection: $originFilter) {
+                ForEach(OriginFilter.allCases) { item in
+                    Text(item.title).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 10)
+            .padding(.bottom, 8)
+            .help("自动 = 对局中棋盘变化后自动采集；手动 = 概览页「采集样本」")
+
+            if visibleSnapshots.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "camera.on.rectangle")
                         .font(.system(size: 24))
                         .foregroundStyle(.secondary)
-                    Text("还没有样本")
+                    Text(snapshots.isEmpty ? "还没有样本" : "没有符合筛选的快照")
                         .font(.callout)
-                    Text("完成校准后，在概览页点击「采集样本」")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+                    if snapshots.isEmpty {
+                        Text("完成校准后，在概览页点击「采集样本」")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(20)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 4) {
-                        ForEach(snapshots) { summary in
+                        ForEach(visibleSnapshots) { summary in
                             snapshotRow(summary)
                         }
                     }
                     .padding(.horizontal, 8)
                     .padding(.bottom, 12)
                 }
+            }
+        }
+        .onChange(of: originFilter) { _, _ in
+            guard let selectedSnapshotID,
+                  visibleSnapshots.contains(where: { $0.id == selectedSnapshotID })
+            else {
+                if let first = visibleSnapshots.first { select(first) }
+                return
             }
         }
     }
@@ -126,6 +189,17 @@ struct SnapshotBrowserView: View {
                         .font(.caption.monospacedDigit())
                         .lineLimit(1)
                     Spacer()
+                    if summary.isAutoSampled {
+                        Text("自动")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.purple)
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(
+                                .purple.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 3)
+                            )
+                    }
                     if hasLabels(summary) {
                         Image(systemName: "tag.fill")
                             .font(.system(size: 9))
@@ -217,7 +291,7 @@ struct SnapshotBrowserView: View {
         manifest: BoardSnapshotManifest,
         labels: SnapshotLabels
     ) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(shortTimestamp(summary.id))
                     .font(.headline.monospacedDigit())
@@ -225,20 +299,61 @@ struct SnapshotBrowserView: View {
                     "\(manifest.rows)×\(manifest.cols) · 窗口 "
                         + "\(Int(manifest.windowSize?.width ?? 0))×\(Int(manifest.windowSize?.height ?? 0))"
                         + " · 皮肤 \(manifest.theme ?? "未知")"
+                        + (summary.isAutoSampled ? " · 自动采样" : "")
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
             Spacer()
+
+            Picker("筛选", selection: $filter) {
+                ForEach(ReviewFilter.allCases) { item in
+                    Text(item.title).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 168)
+
             HStack(spacing: 6) {
                 Text("已标 \(labels.completeCount)/\(labels.cells.count)")
                     .font(.caption)
                     .foregroundStyle(labels.isComplete ? Color.green : Color.orange)
+                if labels.autoCount > 0 {
+                    Text("· 自动 \(labels.autoCount)")
+                        .font(.caption)
+                        .foregroundStyle(.purple)
+                }
                 if labels.isComplete {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                         .font(.caption)
                 }
+            }
+            .fixedSize()
+
+            if autoLabeling {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(autoStatus ?? "自动标注中…")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: 150, alignment: .leading)
+                }
+            } else {
+                Menu {
+                    Button("自动标注当前快照") {
+                        runAutoLabel(on: [summary])
+                    }
+                    Button("自动标注全部未完成快照") {
+                        autoLabelAllPending()
+                    }
+                } label: {
+                    Label("自动标注", systemImage: "wand.and.stars")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
         }
         .padding(.horizontal, 16)
@@ -303,14 +418,40 @@ struct SnapshotBrowserView: View {
                         .padding(2)
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                if label?.auto == true {
+                    Text("AI")
+                        .font(.system(size: 8, weight: .heavy))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 1)
+                        .background(.purple.opacity(0.92), in: RoundedRectangle(cornerRadius: 3))
+                        .padding(3)
+                }
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(borderColor(label), lineWidth: cell.index == selectedCell ? 3 : 1.5)
+                    .strokeBorder(
+                        borderColor(label),
+                        style: StrokeStyle(
+                            lineWidth: cell.index == selectedCell ? 3 : 1.5,
+                            dash: label?.auto == true ? [4, 3] : []
+                        )
+                    )
             }
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            .opacity(matchesFilter(label) ? 1 : 0.16)
         }
         .buttonStyle(.plain)
         .help("第 \(cell.row) 行 · 第 \(cell.col) 列 · 索引 \(cell.index)")
+    }
+
+    private func matchesFilter(_ label: SnapshotCellLabel?) -> Bool {
+        switch filter {
+        case .all: true
+        case .unknown: label?.state == .unknown
+        case .auto: label?.auto == true
+        }
     }
 
     // MARK: - Inspector
@@ -390,6 +531,19 @@ struct SnapshotBrowserView: View {
                 Text("索引 \(cell.index) · \(label.displayLabel)")
                     .font(.caption)
                     .foregroundStyle(label.isComplete ? Color.secondary : Color.orange)
+                if label.auto == true {
+                    HStack(spacing: 6) {
+                        Image(systemName: "wand.and.stars")
+                        Text("自动标注 · 待人工确认")
+                        Spacer()
+                        Button("确认") {
+                            updateSelected { $0.confirm() }
+                        }
+                        .controlSize(.mini)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.purple)
+                }
             }
 
             Divider()
@@ -443,6 +597,14 @@ struct SnapshotBrowserView: View {
                     copyPreviousLabels()
                 }
                 .disabled(snapshots.count < 2)
+                if labels.autoCount > 0 {
+                    Button("确认全部自动标注（\(labels.autoCount)）") {
+                        confirmAllAutoLabels()
+                    }
+                    Button("清除自动标注（\(labels.autoCount)）") {
+                        clearAutoLabels()
+                    }
+                }
             }
             .controlSize(.small)
 
@@ -519,6 +681,135 @@ struct SnapshotBrowserView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func autoLabelAllPending() {
+        let pending = snapshots.filter { summary in
+            guard summary.isValidManifest else { return false }
+            guard let existing = try? library.loadLabels(summary) else { return true }
+            return existing.unknownCount > 0
+        }
+        guard !pending.isEmpty else {
+            message = "没有需要自动标注的快照"
+            return
+        }
+        runAutoLabel(on: pending)
+    }
+
+    private func runAutoLabel(on targets: [SnapshotSummary]) {
+        guard !autoLabeling, !targets.isEmpty else { return }
+        autoLabeling = true
+        autoStatus = "准备中…"
+        message = nil
+        errorMessage = nil
+
+        if targets.count == 1, let only = targets.first,
+           let existing = try? library.loadLabels(only), existing.unknownCount == 0 {
+            autoLabeling = false
+            autoStatus = nil
+            message = "这份快照已全部标完，没有需要自动标注的格子"
+            return
+        }
+
+        let library = self.library
+        let allSnapshots = self.snapshots
+        let selectedID = self.selectedSnapshotID
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            var totalFilled = 0
+            var totalLeft = 0
+            var reused = 0
+            var modeled = 0
+            var updated: [String: SnapshotLabels] = [:]
+            var failed: [String] = []
+
+            for (offset, summary) in targets.enumerated() {
+                let prefix = targets.count > 1 ? "\(offset + 1)/\(targets.count) · " : ""
+                DispatchQueue.main.async {
+                    autoStatus = "\(prefix)\(summary.id)…"
+                }
+                do {
+                    let manifest = try library.loadManifest(summary)
+                    let base = try library.loadLabels(summary)
+                        ?? SnapshotLabels(manifest: manifest, snapshot: summary.id)
+                        ?? SnapshotLabels(
+                            rows: manifest.rows,
+                            cols: manifest.cols,
+                            snapshot: summary.id
+                        )
+
+                    let outcome = try AutoLabeler.run(
+                        target: summary,
+                        manifest: manifest,
+                        targetLabels: base,
+                        allSnapshots: allSnapshots,
+                        library: library,
+                        progress: { text in
+                            DispatchQueue.main.async {
+                                autoStatus = prefix + text
+                            }
+                        }
+                    )
+
+                    // 期间可能有人工编辑，落盘前重读一次，只填仍是「未标」的格子。
+                    var merged = (try? library.loadLabels(summary)) ?? base
+                    for (index, decision) in outcome.decisions
+                    where merged.label(at: index)?.state == .unknown {
+                        merged.update(index: index) { label in
+                            label.applyAuto(
+                                state: decision.state,
+                                color: decision.color,
+                                piece: decision.piece
+                            )
+                        }
+                    }
+                    try library.saveLabels(merged, for: summary)
+
+                    updated[summary.id] = merged
+                    totalFilled += outcome.decisions.count
+                    totalLeft += merged.unknownCount
+                    reused += outcome.decisions.values.filter { $0.source == .previous }.count
+                    modeled += outcome.decisions.values.filter { $0.source == .model }.count
+                } catch {
+                    failed.append("\(summary.id)：\(error.localizedDescription)")
+                }
+            }
+
+            DispatchQueue.main.async {
+                autoLabeling = false
+                autoStatus = nil
+                if let selectedID, let value = updated[selectedID] {
+                    labels = value
+                }
+                if totalFilled > 0 {
+                    message = "自动填入 \(totalFilled) 格"
+                        + "（沿用上一份 \(reused) · 模型 \(modeled)）"
+                        + "，剩余未标 \(totalLeft) 格"
+                } else {
+                    message = "没有可自动确定的格子，需要人工标注"
+                }
+                if !failed.isEmpty {
+                    errorMessage = "部分快照失败：" + failed.joined(separator: "；")
+                }
+            }
+        }
+    }
+
+    private func confirmAllAutoLabels() {
+        guard let summary = selectedSummary, var labels else { return }
+        let count = labels.autoCount
+        labels.confirmAllAuto()
+        self.labels = labels
+        persist(labels, summary: summary)
+        message = "已确认 \(count) 个自动标注格"
+    }
+
+    private func clearAutoLabels() {
+        guard let summary = selectedSummary, var labels else { return }
+        labels.clearAuto()
+        self.labels = labels
+        persist(labels, summary: summary)
+        message = "已把自动标注的格子退回未标"
     }
 
     private func persist(_ labels: SnapshotLabels, summary: SnapshotSummary) {
@@ -602,6 +893,7 @@ struct SnapshotBrowserView: View {
 
     private func borderColor(_ label: SnapshotCellLabel?) -> Color {
         guard let label else { return .secondary.opacity(0.35) }
+        if label.auto == true { return .purple }
         switch label.state {
         case .unknown: return .secondary.opacity(0.35)
         case .empty: return .blue

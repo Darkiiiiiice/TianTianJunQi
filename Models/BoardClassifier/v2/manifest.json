@@ -1,0 +1,227 @@
+{
+  "dataset": {
+    "cells": 18120,
+    "images": 2141,
+    "name": "board-classifier-v2",
+    "sessions": [
+      {
+        "firstSnapshot": "snapshot-20261026-175513-676",
+        "lastSnapshot": "snapshot-20261026-175923-717",
+        "name": "S0",
+        "snapshots": 7,
+        "split": "train",
+        "uniqueImages": 160
+      },
+      {
+        "firstSnapshot": "snapshot-20261027-093500-811",
+        "lastSnapshot": "snapshot-20261027-094621-424",
+        "name": "S1",
+        "snapshots": 32,
+        "split": "train",
+        "uniqueImages": 393
+      },
+      {
+        "firstSnapshot": "snapshot-20261027-114147-974",
+        "lastSnapshot": "snapshot-20261027-114332-638",
+        "name": "S2",
+        "snapshots": 5,
+        "split": "train",
+        "uniqueImages": 131
+      },
+      {
+        "firstSnapshot": "snapshot-20261027-150620-018",
+        "lastSnapshot": "snapshot-20261027-151717-776",
+        "name": "S3",
+        "snapshots": 28,
+        "split": "val",
+        "uniqueImages": 350
+      },
+      {
+        "firstSnapshot": "snapshot-20261027-154131-029",
+        "lastSnapshot": "snapshot-20261027-155503-018",
+        "name": "S4",
+        "snapshots": 154,
+        "split": "train",
+        "uniqueImages": 860
+      },
+      {
+        "firstSnapshot": "snapshot-20261027-161645-577",
+        "lastSnapshot": "snapshot-20261027-162311-876",
+        "name": "S5",
+        "snapshots": 68,
+        "split": "test",
+        "uniqueImages": 515
+      },
+      {
+        "firstSnapshot": "snapshot-20261027-163806-976",
+        "lastSnapshot": "snapshot-20261027-163915-656",
+        "name": "S6",
+        "snapshots": 8,
+        "split": "train",
+        "uniqueImages": 173
+      }
+    ],
+    "snapshots": 302,
+    "splits": {
+      "test": {
+        "colorCounts": {
+          "black": 105,
+          "red": 92
+        },
+        "images": 430,
+        "pieceCounts": {
+          "army_commander": 14,
+          "battalion_commander": 32,
+          "bomb": 12,
+          "brigade_commander": 18,
+          "commander": 5,
+          "company_commander": 25,
+          "division_commander": 10,
+          "engineer": 22,
+          "flag": 4,
+          "mine": 17,
+          "platoon_commander": 13,
+          "regiment_commander": 25
+        },
+        "stateCounts": {
+          "empty": 158,
+          "hidden": 75,
+          "revealed": 197
+        }
+      },
+      "train": {
+        "colorCounts": {
+          "black": 320,
+          "red": 287
+        },
+        "images": 1511,
+        "pieceCounts": {
+          "army_commander": 48,
+          "battalion_commander": 73,
+          "bomb": 22,
+          "brigade_commander": 35,
+          "commander": 59,
+          "company_commander": 73,
+          "division_commander": 58,
+          "engineer": 62,
+          "flag": 12,
+          "mine": 56,
+          "platoon_commander": 63,
+          "regiment_commander": 46
+        },
+        "stateCounts": {
+          "empty": 579,
+          "hidden": 325,
+          "revealed": 607
+        }
+      },
+      "val": {
+        "colorCounts": {
+          "black": 63,
+          "red": 53
+        },
+        "images": 200,
+        "pieceCounts": {
+          "army_commander": 4,
+          "battalion_commander": 3,
+          "bomb": 6,
+          "brigade_commander": 11,
+          "commander": 9,
+          "company_commander": 17,
+          "division_commander": 18,
+          "engineer": 13,
+          "flag": 3,
+          "mine": 16,
+          "platoon_commander": 4,
+          "regiment_commander": 12
+        },
+        "stateCounts": {
+          "empty": 42,
+          "hidden": 42,
+          "revealed": 116
+        }
+      }
+    },
+    "version": 3
+  },
+  "formatVersion": 1,
+  "modelVersion": "board-classifier-v2",
+  "packages": {
+    "color": {
+      "bundleResource": "color.mlmodelc",
+      "modelBytes": 12483,
+      "modelSHA256": "24fcdced28d12295a2d5e31073ad45b056547435f9fd888e059a9ce0880d7062",
+      "package": "/Users/mariomang/Library/Application Support/TianTianJunqiAI/datasets/board-classifier-v2/models/baseline/coreml/color.mlpackage",
+      "weightsSHA256": "596cd6151293e307366f3834823dfc6ee3180861bd0ced3acaddb90ee53b32cb"
+    },
+    "piece": {
+      "bundleResource": "piece.mlmodelc",
+      "modelBytes": 12817,
+      "modelSHA256": "af336874c594e0f462c557bcc0e5ff00686217aea2af3e567652cbfd8f7ef696",
+      "package": "/Users/mariomang/Library/Application Support/TianTianJunqiAI/datasets/board-classifier-v2/models/baseline/coreml/piece.mlpackage",
+      "weightsSHA256": "9d6faa7ba0bb67b5913a4389e462cd7a65986530e75979f1b83f1d567473581e"
+    },
+    "state": {
+      "bundleResource": "state.mlmodelc",
+      "modelBytes": 12512,
+      "modelSHA256": "f57a1ff701c922f449a2dec5eede0bfee97a46a3b3b1892173a1578130f5ad1e",
+      "package": "/Users/mariomang/Library/Application Support/TianTianJunqiAI/datasets/board-classifier-v2/models/baseline/coreml/state.mlpackage",
+      "weightsSHA256": "0181bd5f4e7bfa5511d6cbc5e718f3d125a3ec51405b8cc8daeefe33e8d07048"
+    }
+  },
+  "preprocessing": {
+    "cellCrop": "BoardSnapshotExporter 透视校正 128×128",
+    "colorOrder": "RGB",
+    "confidence": "classLabel_probs 已 softmax 归一化（导出端保证 sum≈1）",
+    "imageSize": 128,
+    "inputLayout": "NHWC",
+    "scale": 0.00392156862745098
+  },
+  "tasks": {
+    "color": {
+      "bestEpoch": 1,
+      "classes": [
+        "red",
+        "black"
+      ],
+      "testAccuracy": 1.0,
+      "testImages": 197,
+      "valAccuracy": 1.0,
+      "valImages": 116
+    },
+    "piece": {
+      "bestEpoch": 36,
+      "classes": [
+        "commander",
+        "army_commander",
+        "division_commander",
+        "brigade_commander",
+        "regiment_commander",
+        "battalion_commander",
+        "company_commander",
+        "platoon_commander",
+        "engineer",
+        "mine",
+        "bomb",
+        "flag"
+      ],
+      "testAccuracy": 1.0,
+      "testImages": 197,
+      "valAccuracy": 1.0,
+      "valImages": 116
+    },
+    "state": {
+      "bestEpoch": 2,
+      "classes": [
+        "empty",
+        "hidden",
+        "revealed"
+      ],
+      "testAccuracy": 1.0,
+      "testImages": 430,
+      "valAccuracy": 1.0,
+      "valImages": 200
+    }
+  },
+  "trainedAt": "2026-10-27T09:53:15.317973+00:00"
+}

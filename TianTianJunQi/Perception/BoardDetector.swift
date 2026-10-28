@@ -30,6 +30,9 @@ enum BoardDetector {
             ))
         }
 
+        let imageAspect = image.extent.width / image.extent.height
+        guard imageAspect > 0, imageAspect.isFinite else { return nil }
+
         // 小窗口先放大，和大窗口保持相近的检测条件。
         let scale: CGFloat = image.extent.width < 1200 ? 2 : 1
         let prepared = scale > 1
@@ -41,8 +44,10 @@ enum BoardDetector {
 
         let request = VNDetectRectanglesRequest()
         request.minimumConfidence = 0.3
-        request.minimumAspectRatio = 1.3
-        request.maximumAspectRatio = 3.6
+        // Vision 的矩形比例口径随系统版本/图像比例有差异，先放宽，
+        // 再用物理宽高比在下面精筛。
+        request.minimumAspectRatio = 0.5
+        request.maximumAspectRatio = 6.0
         request.minimumSize = 0.15
         request.quadratureTolerance = 30
         request.maximumObservations = 8
@@ -66,7 +71,7 @@ enum BoardDetector {
             guard let quad = BoardQuad(corners: corners), quad.isValid else { return nil }
             guard quad.area > 0.08 else { return nil }
 
-            let aspect = quad.aspectRatio
+            let aspect = quad.physicalAspect(imageAspect: imageAspect)
             let aspectError = abs(aspect - targetAspect) / targetAspect
             guard aspectError < 0.35 else { return nil }
 

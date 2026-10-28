@@ -127,7 +127,7 @@ final class ModeEntry {
 
             if state == .unknown {
                 state = try await waitFor(
-                    [.main, .venue, .matching, .board, .result, .popup],
+                    [.main, .modeLobby, .matching, .board, .result, .popup],
                     timeout: 5, step: "等待界面稳定",
                     capture: capture, screenState: screenState, store: store
                 )
@@ -156,13 +156,13 @@ final class ModeEntry {
                     state = try await clickAndWait(
                         keyword: ScreenStateService.mainKeyword,
                         fallback: entryFallback,
-                        targets: [.venue, .board],
+                        targets: [.modeLobby, .board],
                         retries: 2, timeout: 5, step: "点击翻翻棋入口",
                         windows: windows, capture: capture, screenState: screenState,
                         injector: injector, store: store
                     )
                     // 调试模式：只验证入口点击链路，不点场次卡（不开始真人匹配）。
-                    if entryOnly, state == .venue {
+                    if entryOnly, state == .modeLobby {
                         store.transition(
                             to: .paused,
                             reason: "入口点击已验证，停在场次选择页（未开始匹配）"
@@ -172,9 +172,9 @@ final class ModeEntry {
                     }
                 }
 
-                if state == .venue {
+                if state == .modeLobby {
                     state = try await clickAndWait(
-                        keyword: ScreenStateService.venueKeyword,
+                        keyword: ScreenStateService.modeLobbyKeyword,
                         fallback: venueFallback,
                         targets: [.matching, .board],
                         retries: 2, timeout: 5, step: "选择新手场",

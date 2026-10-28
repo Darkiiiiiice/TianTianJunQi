@@ -1,3 +1,4 @@
+import AppKit
 import CoreImage
 import CoreVideo
 import SwiftUI
@@ -11,6 +12,10 @@ struct OverviewView: View {
     let screenState: ScreenStateService
     let modeEntry: ModeEntry
     let calibration: CalibrationStore
+    let autoSampler: BoardAutoSampler
+    let perception: BoardPerceptionService
+    let tapService: BoardTapService
+    let injector: InputInjector
     let boardRows: Int
     let boardCols: Int
     /// 调试：只验证入口点击，不点场次卡（不开始真人匹配）。
@@ -32,6 +37,10 @@ struct OverviewView: View {
     @State private var showGrid = false
     @State private var isExporting = false
     @State private var showSnapshots = false
+    @State private var screenSampleLabel: ScreenState = .main
+    @State private var screenSampleCounts: [ScreenState: Int] = [:]
+    @State private var screenSampleMessage = ""
+    @State private var isSavingScreenSample = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 24) {
@@ -72,13 +81,29 @@ struct OverviewView: View {
                     } else {
                         Text("主菜单 · 入口用校准锚点").foregroundStyle(.green)
                     }
-                case .venue: Text("场次选择页").foregroundStyle(.green)
+                case .modeLobby: Text("场次选择页").foregroundStyle(.green)
                 case .matching: Text("匹配中…").foregroundStyle(.orange)
                 case .board: Text("牌局")
                 case .result: Text("结算页").foregroundStyle(.orange)
                 case .popup: Text("检测到弹窗").foregroundStyle(.orange)
-                case .unknown: Text("未识别（OCR 运行中）").foregroundStyle(.secondary)
+                case .unknown: Text("未识别").foregroundStyle(.secondary)
                 }
+            }
+            GridRow {
+                Text("屏幕分类").foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(screenState.isClassifierReady ? "模型" : "OCR 兜底")
+                        .foregroundStyle(screenState.isClassifierReady ? .green : .secondary)
+                    if screenState.stateSource == .ocr, screenState.state != .unknown {
+                        Text("· OCR 覆盖").foregroundStyle(.orange)
+                    }
+                    if let confidence = screenState.classifierConfidence,
+                       let milliseconds = screenState.classifierMilliseconds {
+                        Text(String(format: "%.2f · %.0fms", confidence, milliseconds))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .help(screenState.classifierStatus)
             }
             GridRow {
                 Text("模式 / 对手").foregroundStyle(.secondary)
@@ -293,6 +318,14 @@ struct OverviewView: View {
                 .help("保存当前整帧 + \(boardRows * boardCols) 个透视校正格子到 Application Support")
             }
 
+            screenSampleRow
+
+            autoSampleRow
+
+            perceptionRow
+
+            tapRow
+
             if let error = capture.lastError {
                 Text(error)
                     .font(.caption)
@@ -307,6 +340,306 @@ struct OverviewView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    /// M1-7：人工给当前界面打标签并采集屏幕样本，训练 7 类屏幕分类器。
+    private var screenSampleRow: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Picker("屏幕样本", selection: $screenSampleLabel) {
+                    ForEach(ScreenState.allCases) { state in
+                        Text(state.label).tag(state)
+                    }
+                }
+                .pickerStyle(.menu)
+                .controlSize(.mini)
+                .font(.caption)
+                .frame(width: 104)
+
+                Button {
+                    captureScreenSample()
+                } label: {
+                    if isSavingScreenSample {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("采集屏幕", systemImage: "rectangle.dashed.badge.record")
+                            .font(.caption)
+                    }
+                }
+                .controlSize(.mini)
+                .disabled(capture.latestFrame == nil || isSavingScreenSample)
+                .help("把当前窗口内容区保存为屏幕分类样本，标签取自左侧菜单")
+
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([StorageKit().screenSamplesURL])
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .buttonStyle(.link)
+                .controlSize(.mini)
+                .help("打开屏幕样本目录")
+
+                Text(screenSampleMessage.isEmpty ? screenSampleSummary : screenSampleMessage)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help(screenSampleSummary)
+
+                Spacer(minLength: 0)
+            }
+
+            Text("屏幕分类样本：先切到目标界面，再选标签采集；`make screen-dataset` 导出后训练 7 类模型")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .onAppear { refreshScreenSampleCounts() }
+    }
+
+    private var screenSampleSummary: String {
+        let total = screenSampleCounts.values.reduce(0, +)
+        guard total > 0 else { return "尚未采集" }
+        let parts = ScreenState.allCases.compactMap { state -> String? in
+            guard let count = screenSampleCounts[state], count > 0 else { return nil }
+            return "\(state.label)\(count)"
+        }
+        return "已采集 \(total) 份 · " + parts.joined(separator: " · ")
+    }
+
+    private func refreshScreenSampleCounts() {
+        screenSampleCounts = ScreenSampleExporter.counts()
+    }
+
+    private func captureScreenSample() {
+        guard let frame = capture.latestFrame else {
+            screenSampleMessage = "等待游戏画面"
+            return
+        }
+        isSavingScreenSample = true
+        screenSampleMessage = ""
+        let label = screenSampleLabel
+        let windowSize = windows.effectiveCandidate?.bounds.size
+        let note = "predicted=\(screenState.state.rawValue) source=\(screenState.stateSource.rawValue)"
+        Task {
+            do {
+                let url = try await Task.detached(priority: .utility) {
+                    try ScreenSampleExporter().export(
+                        frame: frame,
+                        label: label,
+                        windowSize: windowSize,
+                        source: "manual",
+                        note: note
+                    )
+                }.value
+                screenSampleMessage = "已保存 \(url.lastPathComponent)"
+                refreshScreenSampleCounts()
+            } catch {
+                screenSampleMessage = "采集失败：\(error.localizedDescription)"
+            }
+            isSavingScreenSample = false
+        }
+    }
+
+    private var autoSampleRow: some View {
+        HStack(spacing: 8) {
+            Toggle(
+                "棋盘变化自动采样",
+                isOn: Binding(
+                    get: { autoSampler.isEnabled },
+                    set: { autoSampler.isEnabled = $0 }
+                )
+            )
+            .toggleStyle(.checkbox)
+            .font(.caption)
+            .disabled(calibration.calibration == nil)
+            .help(
+                calibration.calibration == nil
+                    ? "请先在设置页完成校准"
+                    : "对局中检测到棋子变化后自动保存一份样本；等本局结束到「样本库」逐格标注"
+            )
+
+            Text(autoSampler.statusText)
+                .font(.caption2)
+                .foregroundStyle(autoSamplerStatusColor)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var autoSamplerStatusColor: Color {
+        switch autoSampler.phase {
+        case .settling, .saving:
+            return .purple
+        case .paused, .failed:
+            return .orange
+        case .off, .waitingForBoard, .watching:
+            return .secondary
+        }
+    }
+
+    /// M1-4/M1-5：实时感知的稳定棋盘摘要 + 轮次/计时/可走格。
+    private var perceptionRow: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Toggle(
+                    "实时棋局感知",
+                    isOn: Binding(
+                        get: { perception.isEnabled },
+                        set: { perception.isEnabled = $0 }
+                    )
+                )
+                .toggleStyle(.checkbox)
+                .font(.caption)
+                .disabled(calibration.calibration == nil)
+                .help(
+                    calibration.calibration == nil
+                        ? "请先在设置页完成校准"
+                        : "对局中逐帧跑棋子分类器并做 3 帧投票平滑，再构建 GameState"
+                )
+
+                Picker(
+                    "我方执色",
+                    selection: Binding(
+                        get: { perception.myColor },
+                        set: { perception.myColor = $0 }
+                    )
+                ) {
+                    Text("红").tag(PieceColor.red)
+                    Text("黑").tag(PieceColor.black)
+                }
+                .pickerStyle(.segmented)
+                .font(.caption2)
+                .frame(width: 76)
+                .help("轮次与可走格都按这个执色判断")
+
+                Text(perception.statusText)
+                    .font(.caption2)
+                    .foregroundStyle(perceptionStatusColor)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                Text(perception.detailText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help(perception.stateJSON ?? "GameState JSON 尚未生成")
+
+                Button("复制状态") {
+                    guard let json = perception.stateJSON else { return }
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(json, forType: .string)
+                }
+                .buttonStyle(.link)
+                .font(.caption2)
+                .disabled(perception.stateJSON == nil)
+                .help("把当前 GameState JSON 复制到剪贴板，便于对齐 shared/schema/game_state.schema.json")
+
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    /// M1-6：真实点击验证。默认关闭注入，开启后每次点击都必须由棋盘变化证实。
+    private var tapRow: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Toggle(
+                    "允许点击棋盘",
+                    isOn: Binding(
+                        get: { tapService.isArmed },
+                        set: { tapService.isArmed = $0 }
+                    )
+                )
+                .toggleStyle(.checkbox)
+                .font(.caption)
+                .help("开启后会向游戏窗口注入真实鼠标点击；先用手动对局验证")
+
+                Button("翻一个可翻格") {
+                    Task { await verifyFlip() }
+                }
+                .buttonStyle(.link)
+                .font(.caption2)
+                .disabled(
+                    !tapService.isArmed
+                        || !permissions.controlReady
+                        || tapService.phase != .idle
+                        || perception.phase != .running
+                        || windows.effectiveWindowID == nil
+                )
+                .help("从 GameState 的可走集合里挑一个暗格翻牌，并等待棋盘变化确认")
+
+                Text(tapService.statusText)
+                    .font(.caption2)
+                    .foregroundStyle(tapStatusColor)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+            }
+
+            Text(tapPointText)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    private var tapPointText: String {
+        let window = tapService.lastWindowPoint.map {
+            String(format: "%.4f,%.4f", $0.x, $0.y)
+        } ?? "—"
+        let screen: String
+        if let point = tapService.lastAbsolutePoint {
+            screen = "\(Int(point.x)),\(Int(point.y))"
+        } else {
+            screen = "—"
+        }
+        return "点击目标 · 窗口内 \(window) · 屏幕 \(screen)"
+    }
+
+    private func verifyFlip() async {
+        guard let board = perception.board,
+              let state = perception.gameState,
+              let cell = state.legalActions.first(where: { board.cells[$0].state == .hidden })
+        else { return }
+        await tapService.perform(
+            .flip(cell: cell),
+            capture: capture,
+            windows: windows,
+            calibration: calibration,
+            screenState: screenState,
+            perception: perception,
+            injector: injector,
+            store: store
+        )
+    }
+
+    private var tapStatusColor: Color {
+        guard let result = tapService.lastResult else { return .secondary }
+        switch result {
+        case .confirmed:
+            return .green
+        case .refused:
+            return .secondary
+        case .unverified:
+            return .orange
+        }
+    }
+
+    private var perceptionStatusColor: Color {
+        switch perception.phase {
+        case .settling:
+            return .purple
+        case .failed:
+            return .orange
+        case .off, .waitingForBoard:
+            return .secondary
+        case .running:
+            return .green
+        }
+    }
+
     private var frameInfo: String {
         guard let frame = capture.latestFrame else { return "等待游戏窗口…" }
         let width = CVPixelBufferGetWidth(frame.pixelBuffer)
@@ -318,12 +651,9 @@ struct OverviewView: View {
             + "（裁自 \(width)×\(height)）· \(rate)"
     }
 
-    /// 当前校准四角对应的 5×12 棋盘格点。
+    /// 当前校准对应的 5×12 棋盘格点；列/行中心线来自校准时逐条拖出的位置。
     private var boardGrid: BoardGrid? {
-        guard let calibration = calibration.calibration,
-              let quad = BoardQuad(corners: calibration.boardCorners)
-        else { return nil }
-        return BoardGrid(quad: quad, rows: boardRows, cols: boardCols)
+        calibration.calibration?.boardGrid(rows: boardRows, cols: boardCols)
     }
 
     private var canCaptureSnapshot: Bool {
@@ -347,7 +677,8 @@ struct OverviewView: View {
                         frame: frame,
                         grid: grid,
                         windowSize: windowSize,
-                        theme: theme
+                        theme: theme,
+                        origin: "manual"
                     )
                 }.value
                 store.note("棋盘样本已保存：\(url.path)")
@@ -382,19 +713,19 @@ struct OverviewView: View {
                 style: StrokeStyle(lineWidth: 2, dash: [7, 4])
             )
 
-            for row in 0...grid.rows {
-                let v = CGFloat(row) / CGFloat(grid.rows)
-                var line = Path()
-                line.move(to: displayPoint(grid.point(u: 0, v: v)))
-                line.addLine(to: displayPoint(grid.point(u: 1, v: v)))
-                context.stroke(line, with: .color(.green.opacity(0.45)), lineWidth: 1)
-            }
-            for col in 0...grid.cols {
-                let u = CGFloat(col) / CGFloat(grid.cols)
-                var line = Path()
-                line.move(to: displayPoint(grid.point(u: u, v: 0)))
-                line.addLine(to: displayPoint(grid.point(u: u, v: 1)))
-                context.stroke(line, with: .color(.green.opacity(0.45)), lineWidth: 1)
+            for row in 0..<grid.rows {
+                for col in 0..<grid.cols {
+                    let bounds = grid.cellRect(row: row, col: col)
+                    var cell = Path()
+                    cell.addLines([
+                        displayPoint(grid.point(u: bounds.u0, v: bounds.v0)),
+                        displayPoint(grid.point(u: bounds.u1, v: bounds.v0)),
+                        displayPoint(grid.point(u: bounds.u1, v: bounds.v1)),
+                        displayPoint(grid.point(u: bounds.u0, v: bounds.v1)),
+                    ])
+                    cell.closeSubpath()
+                    context.stroke(cell, with: .color(.green.opacity(0.28)), lineWidth: 1)
+                }
             }
 
             for center in grid.cellCenters {
