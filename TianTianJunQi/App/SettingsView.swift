@@ -66,7 +66,7 @@ struct SettingsView: View {
                 Text("在实时游戏画面上框选画布、棋盘四角、翻翻棋入口和新手场按钮。锚点按归一化坐标保存，窗口移动或缩放后仍可用；游戏皮肤变化后需要重新校准。")
             }
             Section("棋盘配置") {
-                LabeledContent("棋盘规格", value: "5 × 12（P0-3 实测，30 枚/方）")
+                LabeledContent("棋盘规格", value: "5 × 12（25 枚/方 + 10 个空行营）")
                 LabeledContent("场次", value: "新手场（每局 50 金币）")
             }
             Section("对手模式") {
