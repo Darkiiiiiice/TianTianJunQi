@@ -77,8 +77,13 @@ final class ModeEntry {
     private(set) var isRunning = false
     private(set) var currentStep: String?
     private(set) var lastSummary: String?
+    /// M1-8：最近一次弹窗处理结果（概览页显示）。
+    private(set) var lastPopupSummary: String?
+    private(set) var lastPopupScreenshot: URL?
 
     private var cancelRequested = false
+    /// 每次进入流程共享 3 轮关闭预算；未知弹窗/达到上限立即暂停。
+    private var popupRounds = PopupRoundTracker()
 
     /// 急停/取消：只置标志，循环在下一个检查点退出。
     func cancel() {
@@ -101,6 +106,9 @@ final class ModeEntry {
         cancelRequested = false
         currentStep = nil
         lastSummary = nil
+        lastPopupSummary = nil
+        lastPopupScreenshot = nil
+        popupRounds.reset()
 
         let entryFallback = calibration?.modeEntry ?? Self.entryFallback
         let venueFallback = calibration?.buttons["venue"] ?? Self.venueFallback
@@ -127,10 +135,20 @@ final class ModeEntry {
 
             if state == .unknown {
                 state = try await waitFor(
-                    [.main, .modeLobby, .matching, .board, .result, .popup],
+                    [.main, .modeLobby, .matching, .board, .result],
                     timeout: 5, step: "等待界面稳定",
-                    capture: capture, screenState: screenState, store: store
+                    windows: windows, capture: capture, screenState: screenState,
+                    injector: injector, calibration: calibration, store: store
                 )
+            }
+
+            if state == .popup {
+                state = try await clearPopups(
+                    context: "识别当前界面",
+                    windows: windows, capture: capture, screenState: screenState,
+                    injector: injector, calibration: calibration, store: store
+                )
+                store.note("步骤 1/7 弹窗清理完成 → \(state.label)")
             }
 
             if state == .board {
@@ -141,15 +159,13 @@ final class ModeEntry {
             if state == .result {
                 throw ModeEntryError.blocked("当前在结算页，请手动选择再来一局/切换对手")
             }
-            if state == .popup {
-                throw ModeEntryError.blocked("检测到规则/公告弹窗，已暂停；请手动关闭后重试")
-            }
 
             if state == .matching {
                 store.transition(to: .matching, reason: "已在匹配中，等待牌局")
                 state = try await waitFor(
                     [.board], timeout: Self.matchTimeout, step: "等待匹配",
-                    capture: capture, screenState: screenState, store: store
+                    windows: windows, capture: capture, screenState: screenState,
+                    injector: injector, calibration: calibration, store: store
                 )
             } else {
                 if state == .main {
@@ -159,7 +175,7 @@ final class ModeEntry {
                         targets: [.modeLobby, .board],
                         retries: 2, timeout: 5, step: "点击翻翻棋入口",
                         windows: windows, capture: capture, screenState: screenState,
-                        injector: injector, store: store
+                        injector: injector, calibration: calibration, store: store
                     )
                     // 调试模式：只验证入口点击链路，不点场次卡（不开始真人匹配）。
                     if entryOnly, state == .modeLobby {
@@ -179,7 +195,7 @@ final class ModeEntry {
                         targets: [.matching, .board],
                         retries: 2, timeout: 5, step: "选择新手场",
                         windows: windows, capture: capture, screenState: screenState,
-                        injector: injector, store: store
+                        injector: injector, calibration: calibration, store: store
                     )
                 }
 
@@ -187,7 +203,8 @@ final class ModeEntry {
                     store.transition(to: .matching, reason: "已发起真人匹配，等待牌局")
                     state = try await waitFor(
                         [.board], timeout: Self.matchTimeout, step: "等待匹配",
-                        capture: capture, screenState: screenState, store: store
+                        windows: windows, capture: capture, screenState: screenState,
+                        injector: injector, calibration: calibration, store: store
                     )
                 }
             }
@@ -198,7 +215,14 @@ final class ModeEntry {
 
             // 棋盘稳定：避开入场动画，连续两次识别为 board 才算就绪。
             try await Task.sleep(for: .milliseconds(700))
-            let stable = try await observe(capture: capture, screenState: screenState)
+            var stable = try await observe(capture: capture, screenState: screenState)
+            if stable == .popup {
+                stable = try await clearPopups(
+                    context: "确认棋盘稳定",
+                    windows: windows, capture: capture, screenState: screenState,
+                    injector: injector, calibration: calibration, store: store
+                )
+            }
             guard stable == .board else {
                 throw ModeEntryError.unknownScreen(step: "确认棋盘稳定")
             }
@@ -251,74 +275,39 @@ final class ModeEntry {
         capture: CaptureService,
         screenState: ScreenStateService,
         injector: InputInjector,
+        calibration: Calibration?,
         store: AppStateStore
     ) async throws -> ScreenState {
         var state = try await observe(capture: capture, screenState: screenState)
 
         for attempt in 0...retries {
             if targets.contains(state) { return state }
-            if state == .popup {
-                throw ModeEntryError.blocked("步骤「\(step)」遇到弹窗，已暂停；请手动关闭后重试")
-            }
             if cancelRequested { throw ModeEntryError.cancelled }
 
-            var window = try freshWindow(windows)
-            window = try await ensureWindowOnScreen(window, windows: windows, store: store)
-            raiseWindow(window)
-            try await Task.sleep(for: .milliseconds(250))
+            // M1-8：已知弹窗先清掉；未知弹窗在 clearPopups 里暂停并截图。
+            if state == .popup {
+                state = try await clearPopups(
+                    context: step,
+                    windows: windows, capture: capture, screenState: screenState,
+                    injector: injector, calibration: calibration, store: store
+                )
+                if targets.contains(state) { return state }
+                continue
+            }
 
             let rect = screenState.locate(keyword) ?? fallback
-            // 抬窗与等待期间窗口仍可能被移动：校验和落点都用最新 bounds，
-            // 不能沿用上面 freshWindow 读到的旧坐标。
-            func absolutePoint(in bounds: CGRect) -> CGPoint {
-                CGPoint(
-                    x: bounds.minX + rect.midX * bounds.width,
-                    y: bounds.minY + rect.midY * bounds.height
-                )
-            }
-            guard let bounds = WindowGeometry.frame(of: window.id) else {
-                throw ModeEntryError.noWindow
-            }
-            var point = absolutePoint(in: bounds)
-            guard InputInjector.isOnScreen(point) else {
-                throw ModeEntryError.targetOffScreen(point, bounds)
-            }
-
-            // 全局点击会命中“目标点最上面的窗口”；若游戏被盖住，先 raise 再复核。
-            if let top = WindowGeometry.topWindow(at: point), top.id != window.id {
-                raiseWindow(window)
-                try await Task.sleep(for: .milliseconds(250))
-                guard let raised = WindowGeometry.frame(of: window.id) else {
-                    throw ModeEntryError.noWindow
-                }
-                point = absolutePoint(in: raised)
-                guard InputInjector.isOnScreen(point) else {
-                    throw ModeEntryError.targetOffScreen(point, raised)
-                }
-                if let again = WindowGeometry.topWindow(at: point), again.id != window.id {
-                    throw ModeEntryError.windowCovered(again.owner)
-                }
-            }
-
-            currentStep = "\(step)（第 \(attempt + 1) 次）"
-            let report = try await injector.click(
-                normalized: CGPoint(x: rect.midX, y: rect.midY),
-                windowID: window.id,
-                pid: window.ownerPID
-            )
-            store.note(
-                "步骤「\(step)」第 \(attempt + 1) 次点击 \(keyword) · "
-                    + "窗口 \(Int(report.windowBounds.minX)),\(Int(report.windowBounds.minY)) "
-                    + "\(Int(report.windowBounds.width))×\(Int(report.windowBounds.height)) · "
-                    + "目标 \(Int(report.point.x)),\(Int(report.point.y)) · "
-                    + (report.delivery == .process ? "后台事件" : "全局点击")
-                    + (report.cursorRestored ? "（指针已还原）" : "")
+            try await safeClick(
+                rect: rect,
+                label: "步骤「\(step)」点击 \(keyword)",
+                attempt: attempt,
+                windows: windows, injector: injector, store: store
             )
 
             do {
                 return try await waitFor(
                     targets, timeout: timeout, step: step,
-                    capture: capture, screenState: screenState, store: store
+                    windows: windows, capture: capture, screenState: screenState,
+                    injector: injector, calibration: calibration, store: store
                 )
             } catch let error as ModeEntryError {
                 guard case .timeout = error, attempt < retries else { throw error }
@@ -330,13 +319,80 @@ final class ModeEntry {
         throw ModeEntryError.timeout(step: step, seconds: timeout)
     }
 
-    /// 轮询目标状态；未知界面持续 5s 视为未知弹窗并暂停。
+    /// 全局点击的公共安全路径：抬窗、移回屏内、复核最前窗口，再投递。
+    @discardableResult
+    private func safeClick(
+        rect: CGRect,
+        label: String,
+        attempt: Int,
+        windows: WindowMonitor,
+        injector: InputInjector,
+        store: AppStateStore
+    ) async throws -> ClickReport {
+        var window = try freshWindow(windows)
+        window = try await ensureWindowOnScreen(window, windows: windows, store: store)
+        raiseWindow(window)
+        try await Task.sleep(for: .milliseconds(250))
+
+        // 抬窗与等待期间窗口仍可能被移动：校验和落点都用最新 bounds，
+        // 不能沿用上面 freshWindow 读到的旧坐标。
+        func absolutePoint(in bounds: CGRect) -> CGPoint {
+            CGPoint(
+                x: bounds.minX + rect.midX * bounds.width,
+                y: bounds.minY + rect.midY * bounds.height
+            )
+        }
+        guard let bounds = WindowGeometry.frame(of: window.id) else {
+            throw ModeEntryError.noWindow
+        }
+        var point = absolutePoint(in: bounds)
+        guard InputInjector.isOnScreen(point) else {
+            throw ModeEntryError.targetOffScreen(point, bounds)
+        }
+
+        // 全局点击会命中“目标点最上面的窗口”；若游戏被盖住，先 raise 再复核。
+        if let top = WindowGeometry.topWindow(at: point), top.id != window.id {
+            raiseWindow(window)
+            try await Task.sleep(for: .milliseconds(250))
+            guard let raised = WindowGeometry.frame(of: window.id) else {
+                throw ModeEntryError.noWindow
+            }
+            point = absolutePoint(in: raised)
+            guard InputInjector.isOnScreen(point) else {
+                throw ModeEntryError.targetOffScreen(point, raised)
+            }
+            if let again = WindowGeometry.topWindow(at: point), again.id != window.id {
+                throw ModeEntryError.windowCovered(again.owner)
+            }
+        }
+
+        currentStep = "\(label)（第 \(attempt + 1) 次）"
+        let report = try await injector.click(
+            normalized: CGPoint(x: rect.midX, y: rect.midY),
+            windowID: window.id,
+            pid: window.ownerPID
+        )
+        store.note(
+            "\(label) 第 \(attempt + 1) 次 · "
+                + "窗口 \(Int(report.windowBounds.minX)),\(Int(report.windowBounds.minY)) "
+                + "\(Int(report.windowBounds.width))×\(Int(report.windowBounds.height)) · "
+                + "目标 \(Int(report.point.x)),\(Int(report.point.y)) · "
+                + (report.delivery == .process ? "后台事件" : "全局点击")
+                + (report.cursorRestored ? "（指针已还原）" : "")
+        )
+        return report
+    }
+
+    /// 轮询目标状态；已知弹窗自动清理，未知界面持续 5s 视为未知弹窗并暂停。
     private func waitFor(
         _ targets: Set<ScreenState>,
         timeout: TimeInterval,
         step: String,
+        windows: WindowMonitor,
         capture: CaptureService,
         screenState: ScreenStateService,
+        injector: InputInjector,
+        calibration: Calibration?,
         store: AppStateStore
     ) async throws -> ScreenState {
         let deadline = Date().addingTimeInterval(timeout)
@@ -346,10 +402,18 @@ final class ModeEntry {
         while Date() < deadline {
             if cancelRequested { throw ModeEntryError.cancelled }
 
-            let state = try await observe(capture: capture, screenState: screenState)
+            var state = try await observe(capture: capture, screenState: screenState)
             if targets.contains(state) { return state }
+
             if state == .popup {
-                throw ModeEntryError.blocked("步骤「\(step)」遇到弹窗，已暂停；请手动关闭后重试")
+                state = try await clearPopups(
+                    context: step,
+                    windows: windows, capture: capture, screenState: screenState,
+                    injector: injector, calibration: calibration, store: store
+                )
+                if targets.contains(state) { return state }
+                unknownSince = nil
+                continue
             }
 
             if state == .unknown {
@@ -369,6 +433,174 @@ final class ModeEntry {
         }
 
         throw ModeEntryError.timeout(step: step, seconds: timeout)
+    }
+
+    // MARK: - Popups (M1-8)
+
+    /// 清理当前弹窗，最多消耗 3 轮共享预算；返回第一个非弹窗界面。
+    /// 未知弹窗、需要人工处理的已知弹窗、找不到关闭目标、3 轮仍未清除都会
+    /// 先保存现场截图再抛 `blocked`。
+    private func clearPopups(
+        context: String,
+        windows: WindowMonitor,
+        capture: CaptureService,
+        screenState: ScreenStateService,
+        injector: InputInjector,
+        calibration: Calibration?,
+        store: AppStateStore
+    ) async throws -> ScreenState {
+        var state = try await observe(capture: capture, screenState: screenState)
+        var closed = 0
+
+        while state == .popup {
+            if cancelRequested { throw ModeEntryError.cancelled }
+
+            guard popupRounds.beginRound() else {
+                let screenshot = await capturePopupScreenshot(
+                    kind: "stalled",
+                    template: screenState.popupResolution?.kind,
+                    note: "\(context)：连续关闭 \(PopupCatalog.maxCloseRounds) 轮仍未清除",
+                    capture: capture, screenState: screenState,
+                    windows: windows, store: store
+                )
+                lastPopupSummary = "连续 \(PopupCatalog.maxCloseRounds) 轮未清除 · 已暂停"
+                throw ModeEntryError.blocked(
+                    "\(context)：连续处理 \(PopupCatalog.maxCloseRounds) 轮弹窗仍未清除，"
+                        + "已暂停\(screenshotSuffix(screenshot))"
+                )
+            }
+
+            let resolution = screenState.popupResolution
+                ?? PopupResolver.resolve(hits: screenState.hits)
+
+            switch resolution {
+            case .unknown:
+                let screenshot = await capturePopupScreenshot(
+                    kind: "unknown",
+                    template: nil,
+                    note: "\(context)：OCR 未命中任何已知弹窗模板",
+                    capture: capture, screenState: screenState,
+                    windows: windows, store: store
+                )
+                lastPopupSummary = "未知弹窗 · 已暂停"
+                throw ModeEntryError.blocked(
+                    "\(context)：检测到未知弹窗，已暂停\(screenshotSuffix(screenshot))"
+                )
+
+            case .known(let kind, let action, let matched):
+                store.note(
+                    "弹窗命中「\(kind.label)」"
+                        + (matched.isEmpty ? "" : " · \(matched.joined(separator: "、"))")
+                )
+
+                switch action {
+                case .pause(let reason):
+                    let screenshot = await capturePopupScreenshot(
+                        kind: "blocked",
+                        template: kind,
+                        note: "\(context)：\(reason)",
+                        capture: capture, screenState: screenState,
+                        windows: windows, store: store
+                    )
+                    lastPopupSummary = "\(kind.label) · 已暂停"
+                    throw ModeEntryError.blocked(
+                        "\(context)：\(kind.label) · \(reason)\(screenshotSuffix(screenshot))"
+                    )
+
+                case .close(let target):
+                    guard let rect = popupCloseRect(
+                        target, screenState: screenState, calibration: calibration
+                    ) else {
+                        let screenshot = await capturePopupScreenshot(
+                            kind: "blocked",
+                            template: kind,
+                            note: "\(context)：找不到关闭目标 \(target.label)",
+                            capture: capture, screenState: screenState,
+                            windows: windows, store: store
+                        )
+                        lastPopupSummary = "\(kind.label) · 缺少关闭目标"
+                        throw ModeEntryError.blocked(
+                            "\(context)：已识别「\(kind.label)」但找不到关闭目标 "
+                                + "\(target.label)，已暂停\(screenshotSuffix(screenshot))"
+                        )
+                    }
+
+                    currentStep = "关闭弹窗「\(kind.label)」"
+                    store.note(
+                        "关闭弹窗 \(closed + 1)/\(PopupCatalog.maxCloseRounds) · "
+                            + "\(kind.label) → \(target.label)"
+                    )
+                    try await safeClick(
+                        rect: rect,
+                        label: "关闭弹窗「\(kind.label)」",
+                        attempt: closed,
+                        windows: windows, injector: injector, store: store
+                    )
+                    lastPopupSummary = "\(kind.label) · 已点击 \(target.label)"
+                    closed += 1
+                    try await Task.sleep(for: .milliseconds(650))
+                    state = try await observe(capture: capture, screenState: screenState)
+                }
+            }
+        }
+
+        return state
+    }
+
+    private func popupCloseRect(
+        _ target: PopupCloseTarget,
+        screenState: ScreenStateService,
+        calibration: Calibration?
+    ) -> CGRect? {
+        switch target {
+        case .keyword(let keyword):
+            return screenState.locate(keyword)
+        case .anchor(let key):
+            return calibration?.buttons[key] ?? PopupAnchorDefaults.rect(forKey: key)
+        }
+    }
+
+    /// 保存弹窗现场；失败只记日志，不掩盖真正的暂停原因。
+    private func capturePopupScreenshot(
+        kind: String,
+        template: PopupKind?,
+        note: String,
+        capture: CaptureService,
+        screenState: ScreenStateService,
+        windows: WindowMonitor,
+        store: AppStateStore
+    ) async -> URL? {
+        guard let frame = capture.latestFrame else {
+            store.note("弹窗截图失败：没有可用画面")
+            return nil
+        }
+        let hits = screenState.hits
+        let state = screenState.state
+        let windowSize = (try? freshWindow(windows))?.bounds.size
+        do {
+            let url = try await Task.detached(priority: .utility) {
+                try PopupSampleExporter().export(
+                    frame: frame,
+                    kind: kind,
+                    template: template,
+                    screenState: state,
+                    windowSize: windowSize,
+                    note: note,
+                    hits: hits
+                )
+            }.value
+            lastPopupScreenshot = url
+            store.note("弹窗现场已保存：\(url.path)")
+            return url
+        } catch {
+            store.note("弹窗截图失败：\(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func screenshotSuffix(_ url: URL?) -> String {
+        guard let url else { return "" }
+        return "；截图 \(url.path)"
     }
 
     /// 取最新帧做一次强制 OCR，返回界面状态。

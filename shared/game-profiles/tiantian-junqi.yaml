@@ -75,9 +75,58 @@ flow:
     matching: { keywords: [正在匹配小伙伴, 匹配小伙伴, 每局扣除门票] }
     board: { keywords: [翻旗定阵营, 连续两次翻到同色, 最近翻旗, '第 N 步（正则）'] }
     result: { keywords: [再来一局, 切换对手, 战败, 战胜, 投降] }
-    popup: { keywords: [游戏规则, 玩法规则, 布局规则, 吃子规则, 行走路线] }
+    popup: { keywords: [游戏规则, 玩法规则, 布局规则, 吃子规则, 行走路线, 判负, 扣除, 确定要退出, 一键领取, 领取破产金, 破产金, 金币不足, 恭喜获得, 温馨提示] }
   resultActions: [再来一局, 切换对手]   # 两者都会重新进入真人匹配
-  note: 无房卡/取消匹配按钮；匹配中只能等待或由用户手动退出；弹窗一律暂停
+  note: 无房卡/取消匹配按钮；匹配中只能等待或由用户手动退出；已知弹窗按 popups 目录自动关闭，未知弹窗/广告/实名/更新暂停并截图
+
+popups:
+  # M1-8 实测弹窗目录（v1）。列表之外的弹窗一律按未知处理：暂停 + 截图，绝不盲点。
+  # 顺序即优先级：退出确认最先（误点「确定」会判负扣费），签到先于广告（签到弹层也含「看广告」文案）。
+  maxCloseRounds: 3
+  templates:
+    exitConfirm:
+      signatures: [确定要退出, 现在退出将被判负, 扣除双倍]
+      closeKeywords: [取消]            # 只允许取消，绝不点「确定」
+    signIn:
+      signatures: [登录奖励, 本月累计签到, 累计签到]
+      closeKeywords: [关闭, 取消]
+      closeAnchor: popup.close.signIn
+    task:
+      signatures: [每日任务, 成长任务, 去完成]
+      closeKeywords: [关闭, 取消]
+      closeAnchor: popup.close.task
+    profile:
+      signatures: [个人信息, 游戏ID, 四国胜率]
+      closeKeywords: [关闭, 取消]
+      closeAnchor: popup.close.profile
+    rules:
+      signatures: [游戏规则, 玩法规则, 布局规则, 吃子规则, 行走路线]
+      closeKeywords: [关闭, 我知道了, 知道了, 取消]
+    announcement:
+      signatures: [系统公告, 更新公告, 活动公告, 公告内容]
+      closeKeywords: [关闭, 我知道了, 知道了, 取消]
+    disconnect:
+      signatures: [重新连接, 网络异常, 连接失败, 断线重连, 连接已断开]
+      closeKeywords: [重新连接, 关闭, 取消]
+    ad:
+      signatures: [观看广告, 看广告, 广告奖励]
+      pause: 广告弹窗按设计暂停，不自动观看/跳过
+    realName:
+      signatures: [实名认证, 防沉迷, 身份验证]
+      pause: 实名/防沉迷提示需要人工处理
+    update:
+      signatures: [版本更新, 更新内容, 立即更新]
+      pause: 版本更新弹窗不自动处理
+  # 内置关闭锚点（相对整窗归一化，左上原点）；校准文件 buttons 同名 key 可覆盖。
+  anchors:
+    popup.close.signIn: { x: 0.795, y: 0.235, w: 0.080, h: 0.075 }
+    popup.close.task: { x: 0.798, y: 0.273, w: 0.080, h: 0.077 }
+    popup.close.profile: { x: 0.230, y: 0.200, w: 0.071, h: 0.076 }
+    popup.close: null                  # 通用关闭点未校准时不可用，避免盲点
+  observed:
+    - 2026-10-28: 领取救济金/金币不足弹层（含「一键领取」「观看15秒广告」）未匹配已知模板 → 未知弹窗暂停并导出截图；广告类不自动处理。
+    - 2026-10-28: 登录奖励弹层 → OCR 命中「登录奖励」后用 popup.close.signIn 关闭。
+
 
 reward:
   win: 1.0

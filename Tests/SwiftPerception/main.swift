@@ -1622,12 +1622,214 @@ func testScreenStateFusion() {
     check(resolved.state == .main && resolved.source == .ocr, "无法解析的模型标签退回 OCR")
 }
 
+// MARK: - PopupResolver / 弹窗模板（M1-8）
+
+func popupHits(_ texts: [String]) -> [OCRText] {
+    texts.enumerated().map { index, text in
+        OCRText(
+            text: text,
+            rect: CGRect(
+                x: 0.1,
+                y: 0.1 + CGFloat(index) * 0.05,
+                width: 0.3,
+                height: 0.04
+            ),
+            confidence: 0.9
+        )
+    }
+}
+
+func testPopupResolver() {
+    print("PopupResolver · 已知弹窗模板")
+
+    // 退出确认：只能取消，绝不能点确定。
+    var resolution = PopupResolver.resolve(hits: popupHits([
+        "现在退出将被判负，并扣除双倍", "入场费，您确定要退出吗？", "取消", "确定",
+    ]))
+    guard case .known(let exitKind, let exitAction, let exitMatched) = resolution else {
+        check(false, "退出确认应命中 exitConfirm")
+        return
+    }
+    check(exitKind == .exitConfirm, "退出确认命中 exitConfirm")
+    check(exitAction == .close(.keyword("取消")), "退出确认只点取消")
+    check(exitAction != .close(.keyword("确定")), "退出确认绝不点确定")
+    check(exitMatched.contains("现在退出将被判负"), "记录退出确认强特征")
+
+    // 没有「取消」时暂停，不能退化成点「确定」。
+    resolution = PopupResolver.resolve(hits: popupHits([
+        "现在退出将被判负", "确定",
+    ]))
+    guard case .known(.exitConfirm, .pause(let exitReason), _) = resolution else {
+        check(false, "退出确认缺少取消时应暂停")
+        return
+    }
+    check(exitReason.contains("关闭按钮"), "退出确认缺取消时说明原因")
+
+    // 签到弹层：即使含「看广告」，也按签到模板处理并点右上角 X。
+    resolution = PopupResolver.resolve(hits: popupHits([
+        "登录奖励", "本月累计签到4天", "领取奖励", "看广告额外奖励300金币",
+    ]))
+    guard case .known(.signIn, .close(.anchor(let signInAnchor)), _) = resolution else {
+        check(false, "签到弹层应命中 signIn 并使用锚点")
+        return
+    }
+    check(signInAnchor == PopupAnchor.signInClose.rawValue, "签到弹层使用 signInClose")
+    check(signInAnchor != PopupAnchor.genericClose.rawValue, "签到弹层不退化为通用锚点")
+
+    // 任务弹层。
+    resolution = PopupResolver.resolve(hits: popupHits([
+        "每日任务", "成长任务", "去完成",
+    ]))
+    guard case .known(.task, .close(.anchor(let taskAnchor)), _) = resolution else {
+        check(false, "任务弹层应命中 task")
+        return
+    }
+    check(taskAnchor == PopupAnchor.taskClose.rawValue, "任务弹层使用 taskClose")
+
+    // 个人信息弹层。
+    resolution = PopupResolver.resolve(hits: popupHits([
+        "个人信息", "游戏ID：1143138803", "四国胜率：0%",
+    ]))
+    guard case .known(.profile, .close(.anchor(let profileAnchor)), _) = resolution else {
+        check(false, "个人信息弹层应命中 profile")
+        return
+    }
+    check(profileAnchor == PopupAnchor.profileClose.rawValue, "个人信息弹层使用 profileClose")
+
+    // 规则弹窗优先点 OCR 关闭字样；没有关闭字样则暂停。
+    resolution = PopupResolver.resolve(hits: popupHits([
+        "游戏规则", "吃子规则", "关闭",
+    ]))
+    guard case .known(.rules, .close(.keyword(let ruleClose)), _) = resolution else {
+        check(false, "规则弹窗应点关闭")
+        return
+    }
+    check(ruleClose == "关闭", "规则弹窗命中关闭文字")
+
+    resolution = PopupResolver.resolve(hits: popupHits([
+        "游戏规则", "吃子规则",
+    ]))
+    guard case .known(.rules, .pause(let ruleReason), _) = resolution else {
+        check(false, "规则弹窗没有关闭目标时应暂停")
+        return
+    }
+    check(ruleReason.contains("关闭按钮"), "规则弹窗缺关闭目标时说明原因")
+
+    // 未知弹窗不能靠「确定」「领取奖励」之类的常见字样盲点。
+    resolution = PopupResolver.resolve(hits: popupHits([
+        "神秘活动", "确定", "领取奖励",
+    ]))
+    check(resolution == .unknown, "未知弹窗保持 unknown，不自动关闭")
+
+    // 广告 / 实名：已知但必须暂停。
+    resolution = PopupResolver.resolve(hits: popupHits([
+        "观看广告", "广告奖励",
+    ]))
+    guard case .known(.ad, .pause(let adReason), _) = resolution else {
+        check(false, "广告弹窗应命中 ad 并暂停")
+        return
+    }
+    check(adReason.contains("广告"), "广告暂停原因可读")
+
+    resolution = PopupResolver.resolve(hits: popupHits([
+        "实名认证",
+    ]))
+    guard case .known(.realName, .pause, _) = resolution else {
+        check(false, "实名弹窗应命中 realName 并暂停")
+        return
+    }
+
+    // 断线重连：有「重新连接」时点它。
+    resolution = PopupResolver.resolve(hits: popupHits([
+        "网络异常", "重新连接",
+    ]))
+    guard case .known(.disconnect, .close(.keyword(let reconnect)), _) = resolution else {
+        check(false, "断线弹窗应命中 disconnect")
+        return
+    }
+    check(reconnect == "重新连接", "断线弹窗优先点重新连接")
+
+    // 主菜单底栏的「每日签到/任务」不能误判为弹窗。
+    resolution = PopupResolver.resolve(hits: popupHits([
+        "每日签到", "免费抽奖", "任务", "商城",
+    ]))
+    check(resolution == .unknown, "主菜单关键字不误判为弹窗")
+
+    check(PopupResolution.unknown.label == "未知弹窗", "unknown 显示为未知弹窗")
+    check(
+        PopupResolution.known(
+            kind: .ad, action: .pause("暂停"), matched: ["观看广告"]
+        ).summary.contains("广告"),
+        "弹窗摘要包含模板名"
+    )
+}
+
+func testPopupAnchorDefaults() {
+    print("PopupAnchorDefaults · 内置关闭锚点")
+
+    let keys = [
+        PopupAnchor.signInClose.rawValue,
+        PopupAnchor.taskClose.rawValue,
+        PopupAnchor.profileClose.rawValue,
+    ]
+    for key in keys {
+        guard let rect = PopupAnchorDefaults.rect(forKey: key) else {
+            check(false, "\(key) 应有内置锚点")
+            continue
+        }
+        check(
+            rect.minX >= 0 && rect.minY >= 0 && rect.maxX <= 1 && rect.maxY <= 1,
+            "\(key) 在窗口归一化范围内"
+        )
+        check(rect.width > 0 && rect.height > 0, "\(key) 面积有效")
+    }
+
+    if let signIn = PopupAnchorDefaults.rect(forKey: PopupAnchor.signInClose.rawValue) {
+        check(almost(signIn.midX, 0.835, 0.002), "签到关闭点 x 对齐实测 X")
+        check(almost(signIn.midY, 0.2725, 0.002), "签到关闭点 y 对齐实测 X")
+    }
+    if let profile = PopupAnchorDefaults.rect(forKey: PopupAnchor.profileClose.rawValue) {
+        check(almost(profile.midX, 0.2655, 0.002), "个人信息关闭点 x 对齐实测 X")
+        check(almost(profile.midY, 0.238, 0.002), "个人信息关闭点 y 对齐实测 X")
+    }
+
+    check(
+        PopupAnchorDefaults.rect(forKey: PopupAnchor.genericClose.rawValue) == nil,
+        "通用关闭锚点未校准时不可用"
+    )
+    check(PopupAnchorDefaults.rect(forKey: "popup.close.nope") == nil, "未知锚点返回 nil")
+}
+
+func testPopupRoundTracker() {
+    print("PopupRoundTracker · 3 轮预算")
+
+    check(PopupCatalog.maxCloseRounds == 3, "默认最多关闭 3 轮")
+
+    var tracker = PopupRoundTracker(maxRounds: 3)
+    check(tracker.remaining == 3, "初始剩余 3 轮")
+    check(tracker.beginRound(), "第 1 轮允许")
+    check(tracker.beginRound(), "第 2 轮允许")
+    check(tracker.beginRound(), "第 3 轮允许")
+    check(!tracker.beginRound(), "第 4 轮拒绝")
+    check(tracker.remaining == 0, "预算耗尽")
+
+    tracker.reset()
+    check(tracker.remaining == 3, "reset 恢复预算")
+    check(tracker.beginRound(), "reset 后可再次关闭")
+
+    var zero = PopupRoundTracker(maxRounds: 0)
+    check(!zero.beginRound(), "0 轮预算直接拒绝")
+}
+
 // MARK: - Main
 
 testPieceCatalog()
 testPieceClassifierMapping()
 testScreenStateLabels()
 testScreenStateFusion()
+testPopupResolver()
+testPopupAnchorDefaults()
+testPopupRoundTracker()
 testGameStateEncoding()
 testTurnResolution()
 testTimerParsing()

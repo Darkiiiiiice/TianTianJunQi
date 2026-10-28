@@ -30,6 +30,10 @@ struct StorageKit {
     var screenSamplesURL: URL {
         perceptionURL.appendingPathComponent("screen-samples", isDirectory: true)
     }
+    /// 未知/无法处理弹窗的现场截图与 OCR（M1-8）。
+    var popupsURL: URL {
+        perceptionURL.appendingPathComponent("popups", isDirectory: true)
+    }
     var simURL: URL { rootURL.appendingPathComponent("sim", isDirectory: true) }
     var logsURL: URL { rootURL.appendingPathComponent("logs", isDirectory: true) }
 
@@ -40,6 +44,7 @@ struct StorageKit {
             try fm.createDirectory(at: url, withIntermediateDirectories: true)
         }
         try fm.createDirectory(at: screenSamplesURL, withIntermediateDirectories: true)
+        try fm.createDirectory(at: popupsURL, withIntermediateDirectories: true)
     }
 
     // MARK: game-profile.json

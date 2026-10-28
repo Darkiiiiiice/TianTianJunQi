@@ -85,8 +85,27 @@ struct OverviewView: View {
                 case .matching: Text("匹配中…").foregroundStyle(.orange)
                 case .board: Text("牌局")
                 case .result: Text("结算页").foregroundStyle(.orange)
-                case .popup: Text("检测到弹窗").foregroundStyle(.orange)
+                case .popup:
+                    Text("检测到弹窗 · \(screenState.popupResolution?.label ?? "未识别")")
+                        .foregroundStyle(.orange)
                 case .unknown: Text("未识别").foregroundStyle(.secondary)
+                }
+            }
+            GridRow {
+                Text("弹窗处理").foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(modeEntry.lastPopupSummary ?? "—")
+                        .foregroundStyle(
+                            modeEntry.lastPopupSummary == nil ? Color.secondary : Color.orange
+                        )
+                    if let screenshot = modeEntry.lastPopupScreenshot {
+                        Button("截图") {
+                            NSWorkspace.shared.activateFileViewerSelecting([screenshot])
+                        }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                        .help(screenshot.path)
+                    }
                 }
             }
             GridRow {

@@ -34,6 +34,9 @@ final class ScreenStateService {
         // 退出确认框：模型容易把压暗的牌局 + 弹窗误判成 matching，
         // 这两句是它独有的文案，命中即暂停。
         "判负", "扣除", "确定要退出",
+        // 通用弹层文案：模型没见过的新弹窗也要先归到 popup，
+        // 再由 PopupResolver 判定「已知模板」或「未知弹窗 → 暂停截图」。
+        "一键领取", "领取破产金", "破产金", "金币不足", "恭喜获得", "温馨提示",
     ]
     private static let boardStepPattern = #"第\s*\d+\s*步"#
 
@@ -50,6 +53,8 @@ final class ScreenStateService {
     /// 最近一次 OCR 文本（供日志页与校准）。
     private(set) var lastOCRText: [String] = []
     private(set) var hits: [OCRText] = []
+    /// M1-8：最近一次弹窗识别结果（状态不是 popup 时为 nil）。
+    private(set) var popupResolution: PopupResolution?
 
     /// M1-7：屏幕分类器状态与最近一次推理指标。
     private(set) var classifierStatus = "未加载"
@@ -133,6 +138,9 @@ final class ScreenStateService {
         )
         state = resolved.state
         stateSource = resolved.source
+        popupResolution = state == .popup
+            ? PopupResolver.resolve(hits: analysis.hits)
+            : nil
 
         showsBoardBanner = Self.containsAny(
             Self.boardBannerKeywords,

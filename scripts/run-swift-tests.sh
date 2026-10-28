@@ -21,6 +21,7 @@ swiftc \
   "$ROOT/TianTianJunQi/Perception/GameState.swift" \
   "$ROOT/TianTianJunQi/Perception/OCRText.swift" \
   "$ROOT/TianTianJunQi/Perception/PieceCatalog.swift" \
+  "$ROOT/TianTianJunQi/Perception/PopupResolver.swift" \
   "$ROOT/TianTianJunQi/Perception/ScreenState.swift" \
   "$ROOT/TianTianJunQi/Perception/SnapshotLibrary.swift" \
   "$ROOT/TianTianJunQi/Storage/StorageKit.swift" \
