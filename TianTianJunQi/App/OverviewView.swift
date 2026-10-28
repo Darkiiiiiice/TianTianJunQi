@@ -16,6 +16,7 @@ struct OverviewView: View {
     let perception: BoardPerceptionService
     let tapService: BoardTapService
     let injector: InputInjector
+    let recorder: EpisodeRecorder
     let performance: PerformanceMonitor
     let boardRows: Int
     let boardCols: Int
@@ -59,6 +60,11 @@ struct OverviewView: View {
         .padding()
         .sheet(isPresented: $showSnapshots) {
             SnapshotBrowserView(rootURL: StorageKit().samplesURL)
+        }
+        .onChange(of: screenState.state) { _, newState in
+            if newState == .result, recorder.isRecording {
+                stopRecording()
+            }
         }
     }
 
@@ -346,6 +352,8 @@ struct OverviewView: View {
 
             tapRow
 
+            recordingRow
+
             performanceRow
 
             if let error = capture.lastError {
@@ -604,6 +612,79 @@ struct OverviewView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+        }
+    }
+
+    /// M2-7：把本面板已验证的点击写进 episode；结算页自动收尾。
+    private var recordingRow: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Toggle(
+                    "记录对局",
+                    isOn: Binding(
+                        get: { recorder.isRecording },
+                        set: { enabled in
+                            if enabled {
+                                startRecording()
+                            } else {
+                                stopRecording()
+                            }
+                        }
+                    )
+                )
+                .toggleStyle(.checkbox)
+                .font(.caption)
+                .help("开启后，本面板每次已验证的翻牌/走棋写入 Application Support/episodes")
+
+                Text(recorder.statusText)
+                    .font(.caption2)
+                    .foregroundStyle(
+                        recorder.lastError == nil ? Color.secondary : Color.red
+                    )
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                Button("打开目录") {
+                    guard let directory = recorder.directoryURL else { return }
+                    NSWorkspace.shared.open(directory)
+                }
+                .buttonStyle(.link)
+                .font(.caption2)
+                .disabled(recorder.directoryURL == nil)
+            }
+        }
+    }
+
+    private func startRecording() {
+        guard screenState.state == .board else {
+            store.note("录制失败：当前不在牌局界面")
+            return
+        }
+        guard let state = perception.gameState, state.phase == .playing else {
+            store.note("录制失败：尚无进行中的稳定 GameState")
+            return
+        }
+        do {
+            try recorder.start(initialState: state)
+            store.note("开始录制 episode：\(recorder.episodeID ?? "")")
+        } catch {
+            store.note("开始录制失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func stopRecording() {
+        guard recorder.isRecording else { return }
+        let result = screenState.inferredEpisodeResult ?? .error
+        do {
+            let directory = try recorder.finish(
+                finalState: perception.gameState,
+                result: result
+            )
+            store.note("episode 已保存：\(directory.path)（\(result.rawValue)）")
+        } catch {
+            store.note("结束录制失败：\(error.localizedDescription)")
+            recorder.cancel(removeDirectory: false)
         }
     }
 

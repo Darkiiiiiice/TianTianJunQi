@@ -45,6 +45,8 @@ final class BoardTapService {
     var config = BoardTapConfig()
     /// M1-9：实时延迟采样（由 MainView 注入）。
     var performance: PerformanceMonitor?
+    /// M2-7：录制开启时，把每次已验证的点击写进 episode。
+    var recorder: EpisodeRecorder?
 
     init(config: BoardTapConfig = BoardTapConfig()) {
         self.config = config
@@ -77,6 +79,7 @@ final class BoardTapService {
         automatic: Bool = false
     ) async -> BoardTapResult {
         lastAction = action
+        let beforeState = perception.gameState
         let result = await run(
             action,
             capture: capture,
@@ -91,6 +94,23 @@ final class BoardTapService {
         lastResult = result
         phase = .idle
         store.note("点击验证 · \(action.label) · \(result.text)")
+
+        if result.isConfirmed,
+           let recorder,
+           recorder.isRecording,
+           let beforeState
+        {
+            do {
+                switch action {
+                case .flip(let cell):
+                    try recorder.recordFlip(cell: cell, state: beforeState)
+                case .move(let from, let to):
+                    try recorder.recordMove(from: from, to: to, state: beforeState)
+                }
+            } catch {
+                store.note("episode 记录失败：\(error.localizedDescription)")
+            }
+        }
         return result
     }
 

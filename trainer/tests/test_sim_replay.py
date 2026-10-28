@@ -147,6 +147,43 @@ def test_recorded_episode_detects_bad_flip(episode: Path, tmp_path: Path) -> Non
     assert any("不是 hidden" in message for message in report.errors)
 
 
+def test_swift_style_two_tap_move_episode(
+    episode: Path, tmp_path: Path
+) -> None:
+    """Swift EpisodeRecorder 走棋会写“点源格 + 点目标格”两次 tap_cell。"""
+    target = tmp_path / "swift-style"
+    target.mkdir()
+    meta = json.loads((episode / "meta.json").read_text(encoding="utf-8"))
+    states = _read_jsonl(episode / "states.jsonl")
+    actions = _read_jsonl(episode / "actions.jsonl")
+
+    out_states: list[dict] = []
+    taps: list[dict] = []
+    for index, action in enumerate(actions):
+        before = json.loads(json.dumps(states[index]))
+        before["selected"] = None
+        if action["kind"] == "flip":
+            out_states.append(before)
+            taps.append({"type": "tap_cell", "cell": action["cell"]})
+        else:
+            out_states.append(before)
+            taps.append({"type": "tap_cell", "cell": action["from"]})
+            selected = json.loads(json.dumps(before))
+            selected["selected"] = action["from"]
+            out_states.append(selected)
+            taps.append({"type": "tap_cell", "cell": action["to"]})
+    out_states.append(states[-1])
+    meta["moves"] = len(taps)
+    (target / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    _write_jsonl(target / "states.jsonl", out_states)
+    _write_jsonl(target / "actions.jsonl", taps)
+
+    report = inspect_path(target)
+    assert report.ok, report.errors
+    assert report.plies == len(taps)
+    assert any("无法解析" in message for message in report.warnings)
+
+
 def test_recorded_episode_skips_selection_taps(
     episode: Path, tmp_path: Path
 ) -> None:

@@ -1885,6 +1885,128 @@ func testPerfKit() {
     check(noGate.stage(.screenOCR)?.stats.p95Milliseconds == 50, "报告保留分阶段统计")
 }
 
+// MARK: - EpisodeRecorder
+
+func makeEpisodeTestState(revealedAt: Int? = nil) -> GameState {
+    var cells = (0..<60).map {
+        GameCell(i: $0, state: .empty, color: nil, piece: nil, confidence: nil)
+    }
+    if let revealedAt {
+        cells[revealedAt] = GameCell(
+            i: revealedAt,
+            state: .revealed,
+            color: .red,
+            piece: "engineer",
+            confidence: 0.99
+        )
+    }
+    return GameState(
+        phase: .playing,
+        board: GameBoard(rows: 5, cols: 12, cells: cells),
+        turn: .red,
+        selected: nil,
+        legalActions: [],
+        timers: nil,
+        lastMove: nil
+    )
+}
+
+func readJSONLines(_ url: URL) -> [[String: Any]] {
+    guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+    return text.split(separator: "\n").compactMap { line in
+        guard let data = line.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+}
+
+func testEpisodeRecorder() {
+    print("EpisodeRecorder")
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory
+        .appendingPathComponent("ttj-episode-\(UUID().uuidString)", isDirectory: true)
+    defer { try? fm.removeItem(at: root) }
+    let storage = StorageKit(rootURL: root)
+    let before = makeEpisodeTestState()
+    let after = makeEpisodeTestState(revealedAt: 0)
+
+    let recorder = EpisodeRecorder(storage: storage)
+    do {
+        try recorder.start(
+            initialState: before,
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            episodeID: "test"
+        )
+        try recorder.recordFlip(cell: 0, state: before)
+        let directory = try recorder.finish(finalState: after, result: .win)
+        check(recorder.episodeID == "test", "episode id 使用调用方指定的值")
+        check(directory.lastPathComponent == "test", "episode 目录名正确")
+        for name in ["meta.json", "states.jsonl", "actions.jsonl", "reward.json"] {
+            check(
+                fm.fileExists(atPath: directory.appendingPathComponent(name).path),
+                "生成 \(name)"
+            )
+        }
+
+        let metaData = try Data(contentsOf: directory.appendingPathComponent("meta.json"))
+        let meta = try JSONSerialization.jsonObject(with: metaData) as? [String: Any] ?? [:]
+        check(meta["id"] as? String == "test", "meta.id")
+        check(meta["mode"] as? String == "翻翻棋", "meta.mode")
+        check(meta["moves"] as? Int == 1, "meta.moves 记录点击数")
+        check(meta["result"] as? String == "win", "meta.result")
+        check(meta["score"] as? Int == 1, "meta.score")
+        check(
+            Set(meta.keys) == Set([
+                "id", "mode", "startedAt", "duration", "moves", "result", "score",
+            ]),
+            "meta 只含 schema 字段"
+        )
+
+        let states = readJSONLines(directory.appendingPathComponent("states.jsonl"))
+        let actions = readJSONLines(directory.appendingPathComponent("actions.jsonl"))
+        check(states.count == 2, "states = actions + 1")
+        check(actions.count == 1, "一次翻牌写一行动作")
+        check(actions[0]["type"] as? String == "tap_cell", "动作是 tap_cell")
+        check(actions[0]["cell"] as? Int == 0, "动作 cell 正确")
+        check(states[0]["turn"] as? String == "red", "动作前状态 turn")
+        check(states[1]["phase"] as? String == "playing", "状态 phase")
+    } catch {
+        check(false, "EpisodeRecorder 翻牌录制失败：\(error)")
+    }
+
+    // 走棋：点源格 + 点目标格，第二步状态带 selected。
+    let moveRecorder = EpisodeRecorder(storage: storage)
+    do {
+        try moveRecorder.start(initialState: before, episodeID: "test")
+        try moveRecorder.recordMove(from: 1, to: 2, state: before)
+        let directory = try moveRecorder.finish(finalState: after, result: .draw)
+        check(directory.lastPathComponent == "test-2", "同名 episode 自动加后缀")
+        let states = readJSONLines(directory.appendingPathComponent("states.jsonl"))
+        let actions = readJSONLines(directory.appendingPathComponent("actions.jsonl"))
+        check(states.count == 3, "走棋 states = 2 次点击 + 终局")
+        check(actions.count == 2, "走棋写两次点击")
+        check(actions[0]["cell"] as? Int == 1, "第一次点源格")
+        check(actions[1]["cell"] as? Int == 2, "第二次点目标格")
+        check(states[1]["selected"] as? Int == 1, "第二次点击前 source 已选中")
+    } catch {
+        check(false, "EpisodeRecorder 走棋录制失败：\(error)")
+    }
+
+    // 取消录制会删除半成品目录。
+    let cancelled = EpisodeRecorder(storage: storage)
+    do {
+        try cancelled.start(initialState: before, episodeID: "cancel-me")
+        guard let directory = cancelled.directoryURL else {
+            check(false, "取消录制前目录存在")
+            return
+        }
+        cancelled.cancel()
+        check(!fm.fileExists(atPath: directory.path), "取消后删除半成品目录")
+        check(!cancelled.isRecording, "取消后回到未录制")
+    } catch {
+        check(false, "EpisodeRecorder 取消录制失败：\(error)")
+    }
+}
+
 // MARK: - Main
 
 testPieceCatalog()
@@ -1915,6 +2037,7 @@ testAutoLabelPersistence()
 testBoardChangeDetector()
 testBoardCellDeltas()
 testAutoSampleTracker()
+testEpisodeRecorder()
 testPerfKit()
 
 if failures > 0 {

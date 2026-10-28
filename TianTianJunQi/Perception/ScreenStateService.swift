@@ -118,4 +118,21 @@ final class ScreenStateService {
     func locate(_ keyword: String) -> CGRect? {
         ScreenAnalyzer.locate(keyword, in: hits)
     }
+
+    /// M2-7：结算页结果推断，供 episode `meta.result` 使用。
+    ///
+    /// 只做保守匹配：认不出时返回 nil，由调用方写 `error`，绝不猜测胜负。
+    var inferredEpisodeResult: EpisodeResult? {
+        guard state == .result else { return nil }
+        let text = lastOCRText.joined(separator: " ")
+        if text.contains("我方投降") || text.contains("战败") || text.contains("失败") {
+            return .loss
+        }
+        if text.contains("对方投降") || text.contains("战胜")
+            || text.contains("获胜") || text.contains("胜利")
+        {
+            return .win
+        }
+        return nil
+    }
 }

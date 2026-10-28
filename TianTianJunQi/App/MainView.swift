@@ -14,6 +14,8 @@ struct MainView: View {
     @State private var autoSampler = BoardAutoSampler()
     @State private var perception = BoardPerceptionService()
     @State private var tapService = BoardTapService()
+    /// M2-7：真实对局录制（面板点击/自动对局共用）。
+    @State private var recorder = EpisodeRecorder()
     /// M1-9：实时延迟采样，供概览页与报告导出使用。
     @State private var performance = PerformanceMonitor()
     @State private var gameProfile = GameProfile.tianTianJunQi
@@ -41,6 +43,7 @@ struct MainView: View {
                 calibration: calibration, autoSampler: autoSampler,
                 perception: perception,
                 tapService: tapService, injector: injector,
+                recorder: recorder,
                 performance: performance,
                 boardRows: gameProfile.board.rows,
                 boardCols: gameProfile.board.cols,
@@ -74,6 +77,7 @@ struct MainView: View {
             screenState.performance = performance
             perception.performance = performance
             tapService.performance = performance
+            tapService.recorder = recorder
             permissions.refresh()
             windows.refresh()
             syncCapture()
